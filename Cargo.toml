@@ -1,0 +1,74 @@
+[package]
+name = "lotus_connect_system"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/*",
+    "services/*",
+    "shared/*",
+]
+
+[workspace.dependencies]
+# Web & Async
+axum = "0.7.5"
+axum-extra = { version = "0.9.2", features = ["typed-header"] }
+tokio = { version = "1.38.0", features = ["full"] }
+tower = { version = "0.4.13", features = ["util"] }
+tower-http = { version = "0.5.2", features = ["fs", "cors", "trace", "request-id", "util", "propagate-header"] }
+futures-util = "0.3.30"
+async-trait = "0.1.80"
+
+# Serialization & Validation
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = "1.0.120"
+validator = { version = "0.18.1", features = ["derive"] }
+
+# Database & Cache
+sqlx = { version = "0.8.0", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono"] }
+redis = { version = "0.25.4", features = ["tokio-comp", "connection-manager"] }
+
+# Security & Crypto
+argon2 = "0.5.3"
+jsonwebtoken = "9.3.0"
+rand = "0.8.5"
+
+# Utilities & Ergonomics
+chrono = { version = "0.4.38", features = ["serde"] }
+uuid = { version = "1.9.1", features = ["v7", "serde"] }
+thiserror = "1.0.61"
+anyhow = "1.0.86"
+dotenvy = "0.15.7"
+config = "0.14.0"
+
+# Logging & Observability
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing-appender = "0.2.3"
+regex = "1.10.5"
+
+# Internal Crates (Workspace Members)
+common = { path = "crates/common" }
+config_crate = { path = "crates/config", package = "config-crate" }
+database = { path = "crates/database" }
+auth = { path = "crates/auth" }
+errors = { path = "crates/errors" }
+utils = { path = "crates/utils" }
+
+models = { path = "shared/models" }
+dto = { path = "shared/dto" }
+events = { path = "shared/events" }
+
+[dependencies]
+# Root binary depends on Gateway and config to start the system
+gateway = { path = "services/gateway" }
+config_crate = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dotenvy = { workspace = true }
+errors = { workspace = true }
+common = { workspace = true }
+database = { workspace = true }

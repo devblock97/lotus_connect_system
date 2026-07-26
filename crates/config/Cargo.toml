@@ -1,0 +1,10 @@
+[package]
+name = "config-crate"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+config = { workspace = true }
+dotenvy = { workspace = true }
+serde = { workspace = true }
+errors = { workspace = true }

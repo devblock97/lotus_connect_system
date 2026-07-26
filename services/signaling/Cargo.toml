@@ -1,0 +1,12 @@
+[package]
+name = "service-signaling"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = { workspace = true }
+serde = { workspace = true }
+database = { workspace = true }
+errors = { workspace = true }
+dto = { workspace = true }
+models = { workspace = true }

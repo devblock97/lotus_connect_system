@@ -1,0 +1,20 @@
+[package]
+name = "service-auth"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+database = { workspace = true }
+auth = { workspace = true }
+errors = { workspace = true }
+dto = { workspace = true }
+models = { workspace = true }
+service-users = { path = "../users" }
+config_crate = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+sqlx = { workspace = true }

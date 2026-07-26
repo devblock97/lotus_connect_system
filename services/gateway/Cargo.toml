@@ -1,0 +1,32 @@
+[package]
+name = "gateway"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = { workspace = true }
+axum-extra = { workspace = true }
+tokio = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+errors = { workspace = true }
+config_crate = { workspace = true }
+database = { workspace = true }
+validator = { workspace = true }
+uuid = { workspace = true }
+auth = { workspace = true }
+dto = { workspace = true }
+models = { workspace = true }
+
+# Service Dependencies
+service-auth = { path = "../auth" }
+service-users = { path = "../users" }
+service-chat = { path = "../chat" }
+service-presence = { path = "../presence" }
+service-signaling = { path = "../signaling" }
+service-call = { path = "../call" }
+service-notification = { path = "../notification" }
+service-upload = { path = "../upload" }

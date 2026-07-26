@@ -1,0 +1,13 @@
+[package]
+name = "auth"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+argon2 = { workspace = true }
+jsonwebtoken = { workspace = true }
+serde = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+errors = { workspace = true }
+config_crate = { workspace = true }
