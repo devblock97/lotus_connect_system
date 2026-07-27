@@ -44,11 +44,11 @@ fn default_environment() -> String {
 }
 
 fn default_jwt_access_expiration_minutes() -> i64 {
-    15
+    43200 // 30 days (30 * 24 * 60 minutes)
 }
 
 fn default_jwt_refresh_expiration_days() -> i64 {
-    7
+    30 // 30 days
 }
 
 fn default_upload_dir() -> String {

@@ -10,3 +10,7 @@ database = { workspace = true }
 errors = { workspace = true }
 dto = { workspace = true }
 models = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+sqlx = { workspace = true }

@@ -105,11 +105,12 @@ impl AuthServiceImpl {
 impl AuthService for AuthServiceImpl {
     async fn register(&self, req: RegisterRequest) -> Result<UserResponse> {
         let password_hash = auth::hash_password(&req.password)?;
-        let user = self.user_service.create_user(&req.username, &req.email, &password_hash).await?;
+        let user = self.user_service.create_user(&req.username, req.full_name.as_deref(), &req.email, &password_hash).await?;
 
         Ok(UserResponse {
             id: user.id,
             username: user.username,
+            full_name: user.full_name,
             email: user.email,
         })
     }
@@ -164,6 +165,7 @@ impl AuthService for AuthServiceImpl {
             user: UserResponse {
                 id: user.id,
                 username: user.username,
+                full_name: user.full_name,
                 email: user.email,
             },
             access_token,
