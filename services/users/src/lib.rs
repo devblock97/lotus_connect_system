@@ -6,7 +6,7 @@ use database::PgPool;
 
 #[async_trait::async_trait]
 pub trait UserRepository: Send + Sync {
-    async fn create(&self, id: Uuid, username: &str, email: &str, password_hash: &str) -> Result<User>;
+    async fn create(&self, id: Uuid, username: &str, full_name: Option<&str>, email: &str, password_hash: &str) -> Result<User>;
     async fn find_by_id(&self, id: Uuid) -> Result<Option<User>>;
     async fn find_by_email(&self, email: &str) -> Result<Option<User>>;
     async fn find_by_username(&self, username: &str) -> Result<Option<User>>;
@@ -20,7 +20,7 @@ pub trait UserRepository: Send + Sync {
 
 #[async_trait::async_trait]
 pub trait UserService: Send + Sync {
-    async fn create_user(&self, username: &str, email: &str, password_hash: &str) -> Result<User>;
+    async fn create_user(&self, username: &str, full_name: Option<&str>, email: &str, password_hash: &str) -> Result<User>;
     async fn get_user_by_id(&self, id: Uuid) -> Result<User>;
     async fn get_user_by_email(&self, email: &str) -> Result<User>;
     async fn get_user_by_username(&self, username: &str) -> Result<User>;
@@ -42,12 +42,13 @@ impl UserRepositoryImpl {
 
 #[async_trait::async_trait]
 impl UserRepository for UserRepositoryImpl {
-    async fn create(&self, id: Uuid, username: &str, email: &str, password_hash: &str) -> Result<User> {
+    async fn create(&self, id: Uuid, username: &str, full_name: Option<&str>, email: &str, password_hash: &str) -> Result<User> {
         sqlx::query_as::<_, User>(
-            "INSERT INTO users (id, username, email, password_hash) VALUES ($1, $2, $3, $4) RETURNING id, username, email, password_hash, created_at, updated_at"
+            "INSERT INTO users (id, username, full_name, email, password_hash) VALUES ($1, $2, $3, $4, $5) RETURNING id, username, full_name, email, password_hash, created_at, updated_at"
         )
         .bind(id)
         .bind(username)
+        .bind(full_name)
         .bind(email)
         .bind(password_hash)
         .fetch_one(&self.pool)
@@ -57,7 +58,7 @@ impl UserRepository for UserRepositoryImpl {
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<User>> {
         sqlx::query_as::<_, User>(
-            "SELECT id, username, email, password_hash, created_at, updated_at FROM users WHERE id = $1"
+            "SELECT id, username, full_name, email, password_hash, created_at, updated_at FROM users WHERE id = $1"
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -67,7 +68,7 @@ impl UserRepository for UserRepositoryImpl {
 
     async fn find_by_email(&self, email: &str) -> Result<Option<User>> {
         sqlx::query_as::<_, User>(
-            "SELECT id, username, email, password_hash, created_at, updated_at FROM users WHERE email = $1"
+            "SELECT id, username, full_name, email, password_hash, created_at, updated_at FROM users WHERE email = $1"
         )
         .bind(email)
         .fetch_optional(&self.pool)
@@ -77,7 +78,7 @@ impl UserRepository for UserRepositoryImpl {
 
     async fn find_by_username(&self, username: &str) -> Result<Option<User>> {
         sqlx::query_as::<_, User>(
-            "SELECT id, username, email, password_hash, created_at, updated_at FROM users WHERE username = $1"
+            "SELECT id, username, full_name, email, password_hash, created_at, updated_at FROM users WHERE username = $1"
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -125,7 +126,7 @@ impl UserRepository for UserRepositoryImpl {
     async fn list_friends(&self, user_id: Uuid) -> Result<Vec<User>> {
         sqlx::query_as::<_, User>(
             r#"
-            SELECT u.id, u.username, u.email, u.password_hash, u.created_at, u.updated_at 
+            SELECT u.id, u.username, u.full_name, u.email, u.password_hash, u.created_at, u.updated_at 
             FROM users u
             JOIN friendships f ON (f.user_id = u.id OR f.friend_id = u.id)
             WHERE (f.user_id = $1 OR f.friend_id = $1) AND f.status = 'accepted' AND u.id != $1
@@ -150,7 +151,7 @@ impl UserServiceImpl {
 
 #[async_trait::async_trait]
 impl UserService for UserServiceImpl {
-    async fn create_user(&self, username: &str, email: &str, password_hash: &str) -> Result<User> {
+    async fn create_user(&self, username: &str, full_name: Option<&str>, email: &str, password_hash: &str) -> Result<User> {
         if self.repo.find_by_email(email).await?.is_some() {
             return Err(AppError::Conflict("A user with this email already exists".to_string()));
         }
@@ -159,7 +160,7 @@ impl UserService for UserServiceImpl {
         }
 
         let user_id = Uuid::now_v7();
-        self.repo.create(user_id, username, email, password_hash).await
+        self.repo.create(user_id, username, full_name, email, password_hash).await
     }
 
     async fn get_user_by_id(&self, id: Uuid) -> Result<User> {

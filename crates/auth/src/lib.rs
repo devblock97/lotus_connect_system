@@ -92,3 +92,35 @@ pub fn verify_token(token: &str, secret: &str) -> Result<Claims> {
 
     Ok(token_data.claims)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_password_hashing_and_verification() {
+        let password = "super_secure_password_123";
+        let hash = hash_password(password).unwrap();
+        
+        // Assert password matches hash
+        assert!(verify_password(password, &hash).unwrap());
+
+        // Assert random wrong password does not match
+        assert!(!verify_password("wrong_password", &hash).unwrap());
+    }
+
+    #[test]
+    fn test_jwt_generation_and_verification() {
+        let user_id = Uuid::now_v7();
+        let secret = "my_super_secret_jwt_sign_key_for_testing";
+        
+        // Generate access token
+        let (token, _exp) = generate_token(user_id, TokenType::Access, secret, 15).unwrap();
+
+        // Verify token
+        let claims = verify_token(&token, secret).unwrap();
+
+        assert_eq!(claims.sub, user_id);
+        assert_eq!(claims.token_type, TokenType::Access);
+    }
+}

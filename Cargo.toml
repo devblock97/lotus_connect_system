@@ -13,7 +13,7 @@ members = [
 
 [workspace.dependencies]
 # Web & Async
-axum = "0.7.5"
+axum = { version = "0.7.5", features = ["ws", "multipart"] }
 axum-extra = { version = "0.9.2", features = ["typed-header"] }
 tokio = { version = "1.38.0", features = ["full"] }
 tower = { version = "0.4.13", features = ["util"] }

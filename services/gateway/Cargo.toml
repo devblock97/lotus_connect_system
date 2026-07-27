@@ -7,6 +7,7 @@ edition = "2024"
 axum = { workspace = true }
 axum-extra = { workspace = true }
 tokio = { workspace = true }
+futures-util = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
 serde = { workspace = true }
@@ -29,4 +30,6 @@ service-presence = { path = "../presence" }
 service-signaling = { path = "../signaling" }
 service-call = { path = "../call" }
 service-notification = { path = "../notification" }
+chrono = { workspace = true }
 service-upload = { path = "../upload" }
+redis = { workspace = true }

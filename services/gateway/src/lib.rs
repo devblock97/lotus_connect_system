@@ -19,16 +19,29 @@ use errors::Result;
 
 pub mod handlers;
 pub mod middleware;
+pub mod ws;
 
 #[derive(Clone)]
 pub struct AppState {
     pub config: AppConfig,
     pub auth_service: Arc<dyn service_auth::AuthService>,
     pub user_service: Arc<dyn service_users::UserService>,
+    pub presence_service: Arc<dyn service_presence::PresenceService>,
+    pub chat_service: Arc<dyn service_chat::ChatService>,
+    pub call_service: Arc<dyn service_call::CallService>,
+    pub storage_provider: Arc<dyn service_upload::StorageProvider>,
+    pub notification_service: Arc<dyn service_notification::NotificationService>,
+    pub ws_manager: ws::manager::WsManager,
 }
 
 pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
-    // 1. Initialize Repositories and Services (Dependency Injection)
+    // 1. Initialize Redis client and connection manager
+    let redis_client = redis::Client::open(config.redis_url.clone())
+        .map_err(|err| errors::AppError::Internal(format!("Failed to open Redis: {}", err)))?;
+    let redis_conn = redis_client.get_connection_manager().await
+        .map_err(|err| errors::AppError::Internal(format!("Failed to connect to Redis: {}", err)))?;
+
+    // 2. Initialize Repositories and Services (Dependency Injection)
     let user_repo = Arc::new(service_users::UserRepositoryImpl::new(pool.clone()));
     let user_service = Arc::new(service_users::UserServiceImpl::new(user_repo));
 
@@ -40,37 +53,83 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         token_repo,
     ));
 
+    let presence_service = Arc::new(service_presence::PresenceServiceImpl::new(pool.clone(), redis_conn));
+    
+    let chat_repo = Arc::new(service_chat::ChatRepositoryImpl::new(pool.clone()));
+    let chat_service = Arc::new(service_chat::ChatServiceImpl::new(chat_repo));
+
+    let call_repo = Arc::new(service_call::CallRepositoryImpl::new(pool.clone()));
+    let call_service = Arc::new(service_call::CallServiceImpl::new(call_repo));
+
+    let storage_provider = service_upload::create_storage_provider(&config);
+
+    let notification_provider = Arc::new(service_notification::MockNotificationProvider);
+    let notification_service = Arc::new(service_notification::NotificationServiceImpl::new(
+        pool.clone(),
+        notification_provider,
+    ));
+
+    let ws_manager = ws::manager::WsManager::new();
+
     let state = AppState {
         config: config.clone(),
         auth_service,
         user_service,
+        presence_service,
+        chat_service,
+        call_service,
+        storage_provider,
+        notification_service,
+        ws_manager,
     };
 
-    // 2. Setup CORS
+    // 3. Setup CORS
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
 
-    // 3. Build Auth router
+    // 4. Build Auth router
     let auth_routes = Router::new()
         .route("/register", post(handlers::register_handler))
         .route("/login", post(handlers::login_handler))
         .route("/refresh", post(handlers::refresh_handler))
         .route("/logout", post(handlers::logout_handler));
 
-    // 4. Build Users router (protected by auth)
+    // 5. Build Users router (protected by auth)
     let user_routes = Router::new()
         .route("/friends", post(handlers::add_friend_handler).get(handlers::list_friends_handler))
         .route("/friends/accept", post(handlers::accept_friend_handler))
+        .route("/devices", post(handlers::register_device_handler))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
-    // 5. Combine all routers under versioned api prefix
+    // 6. Build Chats router (protected by auth)
+    let chat_routes = Router::new()
+        .route("/private", post(handlers::create_private_chat_handler))
+        .route("/group", post(handlers::create_group_chat_handler))
+        .route("/:conversation_id/messages", get(handlers::get_messages_handler))
+        .layer(axum_middleware::from_fn(self::middleware::require_auth));
+
+    // 7. Build Calls router (protected by auth)
+    let call_routes = Router::new()
+        .route("/history", get(handlers::get_calls_history_handler))
+        .layer(axum_middleware::from_fn(self::middleware::require_auth));
+
+    // 8. Build Uploads router (protected by auth)
+    let upload_routes = Router::new()
+        .route("/", post(handlers::upload_file_handler))
+        .layer(axum_middleware::from_fn(self::middleware::require_auth));
+
+    // 9. Combine all routers under versioned api prefix
     let api_router = Router::new()
         .nest("/auth", auth_routes)
-        .nest("/users", user_routes);
+        .nest("/users", user_routes)
+        .nest("/chats", chat_routes)
+        .nest("/calls", call_routes)
+        .nest("/uploads", upload_routes)
+        .route("/ws", get(ws::ws_handler));
 
-    // 6. Base App Router
+    // 10. Base App Router
     let app = Router::new()
         .nest("/api/v1", api_router)
         .route("/health", get(health_handler))
@@ -83,7 +142,7 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .layer(Extension(config.clone()))
         .with_state(state);
 
-    // 7. Bind and run
+    // 11. Bind and run
     let addr = SocketAddr::new(
         config.host.parse().unwrap_or([0, 0, 0, 0].into()),
         config.port,

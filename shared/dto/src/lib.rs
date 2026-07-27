@@ -14,6 +14,7 @@ pub struct HealthStatusResponse {
 pub struct RegisterRequest {
     #[validate(length(min = 3, max = 50, message = "Username must be between 3 and 50 characters"))]
     pub username: String,
+    pub full_name: Option<String>,
     #[validate(email(message = "Invalid email format"))]
     pub email: String,
     #[validate(length(min = 6, message = "Password must be at least 6 characters"))]
@@ -35,6 +36,7 @@ pub struct LoginRequest {
 pub struct UserResponse {
     pub id: Uuid,
     pub username: String,
+    pub full_name: Option<String>,
     pub email: String,
 }
 
