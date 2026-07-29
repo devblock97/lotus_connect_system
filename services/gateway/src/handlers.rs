@@ -97,6 +97,32 @@ pub async fn list_friends_handler(
 
 #[derive(serde::Deserialize, Validate)]
 #[serde(rename_all = "camelCase")]
+pub struct SearchUsersQuery {
+    #[validate(length(min = 1, message = "Search query cannot be empty"))]
+    pub q: String,
+}
+
+pub async fn search_users_handler(
+    State(state): State<AppState>,
+    Extension(_claims): Extension<Claims>,
+    Query(query): Query<SearchUsersQuery>,
+) -> Result<Json<Vec<UserResponse>>> {
+    query.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let users = state.user_service.search_users(&query.q).await?;
+    let response: Vec<UserResponse> = users
+        .into_iter()
+        .map(|u| UserResponse {
+            id: u.id,
+            username: u.username,
+            full_name: u.full_name,
+            email: u.email,
+        })
+        .collect();
+    Ok(Json(response))
+}
+
+#[derive(serde::Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
 pub struct CreatePrivateChatRequest {
     pub friend_id: Uuid,
 }

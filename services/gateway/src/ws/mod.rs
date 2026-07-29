@@ -206,6 +206,15 @@ async fn route_ws_event(
                 }),
             }).await;
 
+            // Acknowledge the call initiation back to the sender
+            state.ws_manager.send_to_user(sender_id, WsMessage {
+                event: "call:invite_ack".to_string(),
+                payload: serde_json::json!({
+                    "callId": call.id,
+                    "channelId": channel_id,
+                }),
+            }).await;
+
             Ok(())
         }
 
@@ -214,22 +223,23 @@ async fn route_ws_event(
             let payload = msg.payload;
             let call_id_str = payload.get("callId").and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing callId".to_string()))?;
-            let call_id = Uuid::parse_str(call_id_str)
-                .map_err(|_| AppError::Validation("Invalid callId".to_string()))?;
 
             let recipient_id_str = payload.get("recipientId").and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing recipientId".to_string()))?;
             let recipient_id = Uuid::parse_str(recipient_id_str)
                 .map_err(|_| AppError::Validation("Invalid recipientId".to_string()))?;
 
-            // Record participant joined and status active in DB
-            state.call_service.join_call(call_id, sender_id).await?;
+            if let Ok(call_id) = Uuid::parse_str(call_id_str) {
+                let _ = state.call_service.join_call(call_id, sender_id).await;
+            } else {
+                tracing::warn!("call:accept received non-UUID callId: {}", call_id_str);
+            }
 
             // Forward to recipient
             state.ws_manager.send_to_user(recipient_id, WsMessage {
                 event: "call:accept".to_string(),
                 payload: serde_json::json!({
-                    "callId": call_id,
+                    "callId": call_id_str,
                     "senderId": sender_id,
                 }),
             }).await;
@@ -242,23 +252,24 @@ async fn route_ws_event(
             let payload = msg.payload;
             let call_id_str = payload.get("callId").and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing callId".to_string()))?;
-            let call_id = Uuid::parse_str(call_id_str)
-                .map_err(|_| AppError::Validation("Invalid callId".to_string()))?;
 
             let recipient_id_str = payload.get("recipientId").and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::Validation("Missing recipientId".to_string()))?;
             let recipient_id = Uuid::parse_str(recipient_id_str)
                 .map_err(|_| AppError::Validation("Invalid recipientId".to_string()))?;
 
-            // Record participant left and call ended in DB
-            let _ = state.call_service.leave_call(call_id, sender_id).await;
-            let _ = state.call_service.end_call(call_id).await;
+            if let Ok(call_id) = Uuid::parse_str(call_id_str) {
+                let _ = state.call_service.leave_call(call_id, sender_id).await;
+                let _ = state.call_service.end_call(call_id).await;
+            } else {
+                tracing::warn!("call:ended received non-UUID callId: {}", call_id_str);
+            }
 
             // Forward to recipient
             state.ws_manager.send_to_user(recipient_id, WsMessage {
                 event: "call:ended".to_string(),
                 payload: serde_json::json!({
-                    "callId": call_id,
+                    "callId": call_id_str,
                     "senderId": sender_id,
                 }),
             }).await;

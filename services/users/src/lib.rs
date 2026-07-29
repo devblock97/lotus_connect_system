@@ -10,6 +10,7 @@ pub trait UserRepository: Send + Sync {
     async fn find_by_id(&self, id: Uuid) -> Result<Option<User>>;
     async fn find_by_email(&self, email: &str) -> Result<Option<User>>;
     async fn find_by_username(&self, username: &str) -> Result<Option<User>>;
+    async fn search(&self, query: &str) -> Result<Vec<User>>;
     
     // Friendship management
     async fn create_friendship(&self, id: Uuid, user_id: Uuid, friend_id: Uuid, status: &str) -> Result<Friendship>;
@@ -24,6 +25,7 @@ pub trait UserService: Send + Sync {
     async fn get_user_by_id(&self, id: Uuid) -> Result<User>;
     async fn get_user_by_email(&self, email: &str) -> Result<User>;
     async fn get_user_by_username(&self, username: &str) -> Result<User>;
+    async fn search_users(&self, query: &str) -> Result<Vec<User>>;
     
     async fn send_friend_request(&self, user_id: Uuid, friend_username: &str) -> Result<Friendship>;
     async fn accept_friend_request(&self, user_id: Uuid, friend_id: Uuid) -> Result<()>;
@@ -82,6 +84,20 @@ impl UserRepository for UserRepositoryImpl {
         )
         .bind(username)
         .fetch_optional(&self.pool)
+        .await
+        .map_err(AppError::Database)
+    }
+
+    async fn search(&self, query: &str) -> Result<Vec<User>> {
+        let db_query = format!("%{}%", query);
+        sqlx::query_as::<_, User>(
+            "SELECT id, username, full_name, email, password_hash, created_at, updated_at \
+             FROM users \
+             WHERE username ILIKE $1 OR email ILIKE $1 OR full_name ILIKE $1 \
+             LIMIT 50"
+        )
+        .bind(db_query)
+        .fetch_all(&self.pool)
         .await
         .map_err(AppError::Database)
     }
@@ -202,5 +218,12 @@ impl UserService for UserServiceImpl {
 
     async fn get_friends_list(&self, user_id: Uuid) -> Result<Vec<User>> {
         self.repo.list_friends(user_id).await
+    }
+
+    async fn search_users(&self, query: &str) -> Result<Vec<User>> {
+        if query.trim().is_empty() {
+            return Ok(vec![]);
+        }
+        self.repo.search(query).await
     }
 }
