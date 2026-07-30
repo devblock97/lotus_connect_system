@@ -99,7 +99,9 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
     // 5. Build Users router (protected by auth)
     let user_routes = Router::new()
         .route("/friends", post(handlers::add_friend_handler).get(handlers::list_friends_handler))
+        .route("/friends/requests", get(handlers::list_friend_requests_handler))
         .route("/friends/accept", post(handlers::accept_friend_handler))
+        .route("/friends/reject", post(handlers::reject_friend_handler))
         .route("/search", get(handlers::search_users_handler))
         .route("/devices", post(handlers::register_device_handler))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));

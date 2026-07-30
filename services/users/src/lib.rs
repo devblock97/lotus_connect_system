@@ -10,13 +10,15 @@ pub trait UserRepository: Send + Sync {
     async fn find_by_id(&self, id: Uuid) -> Result<Option<User>>;
     async fn find_by_email(&self, email: &str) -> Result<Option<User>>;
     async fn find_by_username(&self, username: &str) -> Result<Option<User>>;
-    async fn search(&self, query: &str) -> Result<Vec<User>>;
+    async fn search(&self, query: &str, current_user_id: Uuid) -> Result<Vec<(User, Option<String>, Option<Uuid>)>>;
     
     // Friendship management
     async fn create_friendship(&self, id: Uuid, user_id: Uuid, friend_id: Uuid, status: &str) -> Result<Friendship>;
     async fn find_friendship(&self, user_id: Uuid, friend_id: Uuid) -> Result<Option<Friendship>>;
     async fn update_friendship_status(&self, user_id: Uuid, friend_id: Uuid, status: &str) -> Result<()>;
+    async fn delete_friendship(&self, user_id: Uuid, friend_id: Uuid) -> Result<()>;
     async fn list_friends(&self, user_id: Uuid) -> Result<Vec<User>>;
+    async fn list_pending_requests(&self, user_id: Uuid) -> Result<Vec<User>>;
 }
 
 #[async_trait::async_trait]
@@ -25,11 +27,13 @@ pub trait UserService: Send + Sync {
     async fn get_user_by_id(&self, id: Uuid) -> Result<User>;
     async fn get_user_by_email(&self, email: &str) -> Result<User>;
     async fn get_user_by_username(&self, username: &str) -> Result<User>;
-    async fn search_users(&self, query: &str) -> Result<Vec<User>>;
+    async fn search_users(&self, query: &str, current_user_id: Uuid) -> Result<Vec<(User, Option<String>, Option<Uuid>)>>;
     
     async fn send_friend_request(&self, user_id: Uuid, friend_username: &str) -> Result<Friendship>;
     async fn accept_friend_request(&self, user_id: Uuid, friend_id: Uuid) -> Result<()>;
+    async fn reject_friend_request(&self, user_id: Uuid, friend_id: Uuid) -> Result<()>;
     async fn get_friends_list(&self, user_id: Uuid) -> Result<Vec<User>>;
+    async fn get_pending_requests(&self, user_id: Uuid) -> Result<Vec<User>>;
 }
 
 pub struct UserRepositoryImpl {
@@ -88,18 +92,51 @@ impl UserRepository for UserRepositoryImpl {
         .map_err(AppError::Database)
     }
 
-    async fn search(&self, query: &str) -> Result<Vec<User>> {
+    async fn search(&self, query: &str, current_user_id: Uuid) -> Result<Vec<(User, Option<String>, Option<Uuid>)>> {
         let db_query = format!("%{}%", query);
-        sqlx::query_as::<_, User>(
-            "SELECT id, username, full_name, email, password_hash, created_at, updated_at \
-             FROM users \
-             WHERE username ILIKE $1 OR email ILIKE $1 OR full_name ILIKE $1 \
-             LIMIT 50"
+        let rows = sqlx::query!(
+            r#"
+            SELECT 
+                u.id, 
+                u.username, 
+                u.full_name, 
+                u.email, 
+                u.password_hash, 
+                u.created_at, 
+                u.updated_at,
+                f.status AS "friendship_status?",
+                f.user_id AS "friendship_sender_id?"
+            FROM users u
+            LEFT JOIN friendships f ON 
+                (f.user_id = $2 AND f.friend_id = u.id) OR 
+                (f.user_id = u.id AND f.friend_id = $2)
+            WHERE (u.username ILIKE $1 OR u.email ILIKE $1 OR u.full_name ILIKE $1) AND u.id != $2
+            LIMIT 50
+            "#,
+            db_query,
+            current_user_id
         )
-        .bind(db_query)
         .fetch_all(&self.pool)
         .await
-        .map_err(AppError::Database)
+        .map_err(AppError::Database)?;
+
+        let results = rows
+            .into_iter()
+            .map(|row| {
+                let user = User {
+                    id: row.id,
+                    username: row.username,
+                    full_name: row.full_name,
+                    email: row.email,
+                    password_hash: row.password_hash,
+                    created_at: row.created_at,
+                    updated_at: row.updated_at,
+                };
+                (user, row.friendship_status, row.friendship_sender_id)
+            })
+            .collect();
+
+        Ok(results)
     }
 
     async fn create_friendship(&self, id: Uuid, user_id: Uuid, friend_id: Uuid, status: &str) -> Result<Friendship> {
@@ -139,6 +176,18 @@ impl UserRepository for UserRepositoryImpl {
         .map_err(AppError::Database)
     }
 
+    async fn delete_friendship(&self, user_id: Uuid, friend_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "DELETE FROM friendships WHERE (user_id = $1 AND friend_id = $2) OR (user_id = $2 AND friend_id = $1)"
+        )
+        .bind(user_id)
+        .bind(friend_id)
+        .execute(&self.pool)
+        .await
+        .map(|_| ())
+        .map_err(AppError::Database)
+    }
+
     async fn list_friends(&self, user_id: Uuid) -> Result<Vec<User>> {
         sqlx::query_as::<_, User>(
             r#"
@@ -146,6 +195,21 @@ impl UserRepository for UserRepositoryImpl {
             FROM users u
             JOIN friendships f ON (f.user_id = u.id OR f.friend_id = u.id)
             WHERE (f.user_id = $1 OR f.friend_id = $1) AND f.status = 'accepted' AND u.id != $1
+            "#
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::Database)
+    }
+
+    async fn list_pending_requests(&self, user_id: Uuid) -> Result<Vec<User>> {
+        sqlx::query_as::<_, User>(
+            r#"
+            SELECT u.id, u.username, u.full_name, u.email, u.password_hash, u.created_at, u.updated_at 
+            FROM users u
+            JOIN friendships f ON f.user_id = u.id
+            WHERE f.friend_id = $1 AND f.status = 'pending'
             "#
         )
         .bind(user_id)
@@ -216,14 +280,29 @@ impl UserService for UserServiceImpl {
         self.repo.update_friendship_status(user_id, friend_id, "accepted").await
     }
 
+    async fn reject_friend_request(&self, user_id: Uuid, friend_id: Uuid) -> Result<()> {
+        let friendship = self.repo.find_friendship(user_id, friend_id).await?
+            .ok_or_else(|| AppError::NotFound("Friend request not found".to_string()))?;
+
+        if friendship.status != "pending" {
+            return Err(AppError::Validation("Friend request is not pending".to_string()));
+        }
+
+        self.repo.delete_friendship(user_id, friend_id).await
+    }
+
     async fn get_friends_list(&self, user_id: Uuid) -> Result<Vec<User>> {
         self.repo.list_friends(user_id).await
     }
 
-    async fn search_users(&self, query: &str) -> Result<Vec<User>> {
+    async fn get_pending_requests(&self, user_id: Uuid) -> Result<Vec<User>> {
+        self.repo.list_pending_requests(user_id).await
+    }
+
+    async fn search_users(&self, query: &str, current_user_id: Uuid) -> Result<Vec<(User, Option<String>, Option<Uuid>)>> {
         if query.trim().is_empty() {
             return Ok(vec![]);
         }
-        self.repo.search(query).await
+        self.repo.search(query, current_user_id).await
     }
 }

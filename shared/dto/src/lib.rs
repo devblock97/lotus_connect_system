@@ -38,6 +38,8 @@ pub struct UserResponse {
     pub username: String,
     pub full_name: Option<String>,
     pub email: String,
+    pub friendship_status: Option<String>,
+    pub friendship_sender_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
