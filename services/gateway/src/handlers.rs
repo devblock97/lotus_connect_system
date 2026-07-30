@@ -87,12 +87,60 @@ pub async fn accept_friend_handler(
     }))
 }
 
+#[derive(serde::Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct RejectFriendRequest {
+    pub friend_id: Uuid,
+}
+
+pub async fn reject_friend_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(payload): Json<RejectFriendRequest>,
+) -> Result<Json<GenericResponse>> {
+    state.user_service.reject_friend_request(claims.sub, payload.friend_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Friend request rejected successfully".to_string(),
+    }))
+}
+
 pub async fn list_friends_handler(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
-) -> Result<Json<Vec<models::User>>> {
+) -> Result<Json<Vec<UserResponse>>> {
     let friends = state.user_service.get_friends_list(claims.sub).await?;
-    Ok(Json(friends))
+    let response: Vec<UserResponse> = friends
+        .into_iter()
+        .map(|u| UserResponse {
+            id: u.id,
+            username: u.username,
+            full_name: u.full_name,
+            email: u.email,
+            friendship_status: Some("accepted".to_string()),
+            friendship_sender_id: None,
+        })
+        .collect();
+    Ok(Json(response))
+}
+
+pub async fn list_friend_requests_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<Vec<UserResponse>>> {
+    let requests = state.user_service.get_pending_requests(claims.sub).await?;
+    let response: Vec<UserResponse> = requests
+        .into_iter()
+        .map(|u| UserResponse {
+            id: u.id,
+            username: u.username,
+            full_name: u.full_name,
+            email: u.email,
+            friendship_status: Some("pending".to_string()),
+            friendship_sender_id: Some(u.id),
+        })
+        .collect();
+    Ok(Json(response))
 }
 
 #[derive(serde::Deserialize, Validate)]
@@ -104,18 +152,20 @@ pub struct SearchUsersQuery {
 
 pub async fn search_users_handler(
     State(state): State<AppState>,
-    Extension(_claims): Extension<Claims>,
+    Extension(claims): Extension<Claims>,
     Query(query): Query<SearchUsersQuery>,
 ) -> Result<Json<Vec<UserResponse>>> {
     query.validate().map_err(|err| AppError::Validation(err.to_string()))?;
-    let users = state.user_service.search_users(&query.q).await?;
+    let users = state.user_service.search_users(&query.q, claims.sub).await?;
     let response: Vec<UserResponse> = users
         .into_iter()
-        .map(|u| UserResponse {
+        .map(|(u, status, sender_id)| UserResponse {
             id: u.id,
             username: u.username,
             full_name: u.full_name,
             email: u.email,
+            friendship_status: status,
+            friendship_sender_id: sender_id,
         })
         .collect();
     Ok(Json(response))
