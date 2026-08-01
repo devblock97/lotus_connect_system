@@ -104,10 +104,13 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .route("/friends/reject", post(handlers::reject_friend_handler))
         .route("/search", get(handlers::search_users_handler))
         .route("/devices", post(handlers::register_device_handler))
+        .route("/notifications", get(handlers::list_notifications_handler))
+        .route("/notifications/read", post(handlers::mark_notifications_read_handler))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
     // 6. Build Chats router (protected by auth)
     let chat_routes = Router::new()
+        .route("/", get(handlers::list_conversations_handler))
         .route("/private", post(handlers::create_private_chat_handler))
         .route("/group", post(handlers::create_group_chat_handler))
         .route("/:conversation_id/messages", get(handlers::get_messages_handler))

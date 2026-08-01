@@ -8,6 +8,7 @@ use models::{Call, CallEvent};
 #[async_trait::async_trait]
 pub trait CallRepository: Send + Sync {
     async fn create_call(&self, id: Uuid, host_id: Uuid, conversation_id: Option<Uuid>, channel_id: &str, is_video: bool) -> Result<Call>;
+    async fn find_by_id(&self, id: Uuid) -> Result<Option<Call>>;
     async fn update_status(&self, id: Uuid, status: &str, ended_at: Option<chrono::DateTime<Utc>>) -> Result<()>;
     
     async fn add_participant(&self, call_id: Uuid, user_id: Uuid) -> Result<()>;
@@ -20,6 +21,7 @@ pub trait CallRepository: Send + Sync {
 #[async_trait::async_trait]
 pub trait CallService: Send + Sync {
     async fn start_call(&self, host_id: Uuid, conversation_id: Option<Uuid>, channel_id: &str, is_video: bool) -> Result<Call>;
+    async fn get_call(&self, id: Uuid) -> Result<Option<Call>>;
     async fn join_call(&self, call_id: Uuid, user_id: Uuid) -> Result<()>;
     async fn leave_call(&self, call_id: Uuid, user_id: Uuid) -> Result<()>;
     async fn end_call(&self, call_id: Uuid) -> Result<()>;
@@ -49,6 +51,16 @@ impl CallRepository for CallRepositoryImpl {
         .bind(channel_id)
         .bind(is_video)
         .fetch_one(&self.pool)
+        .await
+        .map_err(AppError::Database)
+    }
+
+    async fn find_by_id(&self, id: Uuid) -> Result<Option<Call>> {
+        sqlx::query_as::<_, Call>(
+            "SELECT id, host_id, conversation_id, channel_id, is_video, status, created_at, ended_at FROM calls WHERE id = $1"
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
         .await
         .map_err(AppError::Database)
     }
@@ -135,6 +147,10 @@ impl CallService for CallServiceImpl {
         let call = self.repo.create_call(call_id, host_id, conversation_id, channel_id, is_video).await?;
         self.repo.add_participant(call_id, host_id).await?;
         Ok(call)
+    }
+
+    async fn get_call(&self, id: Uuid) -> Result<Option<Call>> {
+        self.repo.find_by_id(id).await
     }
 
     async fn join_call(&self, call_id: Uuid, user_id: Uuid) -> Result<()> {

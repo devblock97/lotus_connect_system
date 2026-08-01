@@ -9,7 +9,8 @@ use errors::{AppError, Result};
 use auth::Claims;
 use dto::{
     RegisterRequest, LoginRequest, RefreshTokenRequest, 
-    AuthResponse, UserResponse, TokenResponse, GenericResponse
+    AuthResponse, UserResponse, TokenResponse, GenericResponse,
+    UserConversationResponse
 };
 use crate::AppState;
 
@@ -213,6 +214,29 @@ pub struct GetMessagesQuery {
     pub limit: Option<i64>,
 }
 
+pub async fn list_conversations_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<Vec<UserConversationResponse>>> {
+    let conversations = state.chat_service.list_user_conversations(claims.sub).await?;
+    let mut responses = Vec::new();
+    for conv in conversations {
+        let mut peer_id = None;
+        if !conv.is_group {
+            let members = state.chat_service.get_conversation_members(conv.id).await?;
+            peer_id = members.into_iter().find(|&id| id != claims.sub);
+        }
+        responses.push(UserConversationResponse {
+            id: conv.id,
+            title: conv.title,
+            is_group: conv.is_group,
+            peer_id,
+            created_at: conv.created_at,
+        });
+    }
+    Ok(Json(responses))
+}
+
 pub async fn get_messages_handler(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
@@ -270,5 +294,24 @@ pub async fn register_device_handler(
     Ok(Json(GenericResponse {
         success: true,
         message: "Device registered successfully".to_string(),
+    }))
+}
+
+pub async fn list_notifications_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<Vec<models::Notification>>> {
+    let notifications = state.notification_service.get_notifications(claims.sub).await?;
+    Ok(Json(notifications))
+}
+
+pub async fn mark_notifications_read_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<GenericResponse>> {
+    state.notification_service.mark_all_read(claims.sub).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Notifications marked as read".to_string(),
     }))
 }

@@ -146,6 +146,51 @@ async fn route_ws_event(
                 event: "chat:message".to_string(),
                 payload: serde_json::to_value(&message).unwrap_or(serde_json::Value::Null),
             }).await;
+
+            // Fetch sender profile name for notification display
+            let sender_name = match state.user_service.get_user_by_id(sender_id).await {
+                Ok(u) => u.full_name.unwrap_or(u.username),
+                Err(_) => "Someone".to_string(),
+            };
+
+            // Trigger notification for other members about the unread message
+            for member_id in &members {
+                if *member_id != sender_id {
+                    // Only send notification if they are NOT currently viewing the conversation
+                    if !state.ws_manager.is_viewing_conversation(*member_id, conversation_id).await {
+                        let title = format!("New message from {}", sender_name);
+                        let body = content.to_string();
+                        let payload_data = serde_json::json!({
+                            "type": "chat",
+                            "conversationId": conversation_id,
+                            "messageId": message.id,
+                        });
+                        let _ = state.notification_service.send_notification(
+                            *member_id,
+                            &title,
+                            &body,
+                            Some(payload_data.clone())
+                        ).await;
+
+                        // Also send a real-time event to the recipient so the Alerts list updates immediately
+                        state.ws_manager.send_to_user(
+                            *member_id,
+                            WsMessage {
+                                event: "notification:new".to_string(),
+                                payload: serde_json::json!({
+                                    "id": uuid::Uuid::now_v7(),
+                                    "userId": *member_id,
+                                    "title": title,
+                                    "body": body,
+                                    "data": payload_data,
+                                    "isRead": false,
+                                    "createdAt": chrono::Utc::now(),
+                                }),
+                            }
+                        ).await;
+                    }
+                }
+            }
             
             Ok(())
         }
@@ -172,6 +217,16 @@ async fn route_ws_event(
                 }),
             }).await;
 
+            Ok(())
+        }
+
+        // Active conversation focus tracking
+        "chat:focus" => {
+            let conversation_id = msg.payload.get("conversationId")
+                .and_then(|v| v.as_str())
+                .and_then(|id_str| Uuid::parse_str(id_str).ok());
+
+            state.ws_manager.set_active_conversation(sender_id, conversation_id).await;
             Ok(())
         }
 
@@ -259,6 +314,46 @@ async fn route_ws_event(
                 .map_err(|_| AppError::Validation("Invalid recipientId".to_string()))?;
 
             if let Ok(call_id) = Uuid::parse_str(call_id_str) {
+                // Send notification only in the event of a missed call (i.e. status is still 'initiated')
+                if let Ok(Some(call)) = state.call_service.get_call(call_id).await {
+                    if call.status == "initiated" {
+                        let caller_name = match state.user_service.get_user_by_id(sender_id).await {
+                            Ok(u) => u.full_name.unwrap_or(u.username),
+                            Err(_) => "Someone".to_string(),
+                        };
+                        let title = "Missed Call".to_string();
+                        let body = format!("You missed a call from {}", caller_name);
+                        let payload_data = serde_json::json!({
+                            "type": "missed_call",
+                            "callId": call_id,
+                            "callerId": sender_id,
+                        });
+                        let _ = state.notification_service.send_notification(
+                            recipient_id,
+                            &title,
+                            &body,
+                            Some(payload_data.clone())
+                        ).await;
+
+                        // Also send a real-time event to the recipient so the Alerts list updates immediately
+                        state.ws_manager.send_to_user(
+                            recipient_id,
+                            WsMessage {
+                                event: "notification:new".to_string(),
+                                payload: serde_json::json!({
+                                    "id": uuid::Uuid::now_v7(),
+                                    "userId": recipient_id,
+                                    "title": title,
+                                    "body": body,
+                                    "data": payload_data,
+                                    "isRead": false,
+                                    "createdAt": chrono::Utc::now(),
+                                }),
+                            }
+                        ).await;
+                    }
+                }
+
                 let _ = state.call_service.leave_call(call_id, sender_id).await;
                 let _ = state.call_service.end_call(call_id).await;
             } else {

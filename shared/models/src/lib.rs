@@ -125,3 +125,14 @@ pub struct CallEvent {
     pub event_type: String, // 'mute', 'unmute', 'camera_on', ...
     pub created_at: DateTime<Utc>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Notification {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub title: String,
+    pub body: String,
+    pub data: Option<serde_json::Value>,
+    pub is_read: bool,
+    pub created_at: DateTime<Utc>,
+}
