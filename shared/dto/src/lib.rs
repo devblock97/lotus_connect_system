@@ -69,3 +69,13 @@ pub struct GenericResponse {
     pub success: bool,
     pub message: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserConversationResponse {
+    pub id: Uuid,
+    pub title: Option<String>,
+    pub is_group: bool,
+    pub peer_id: Option<Uuid>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}

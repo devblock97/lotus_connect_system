@@ -26,6 +26,7 @@ pub trait ChatRepository: Send + Sync {
     
     async fn mark_as_read(&self, message_id: Uuid, user_id: Uuid) -> Result<()>;
     async fn get_read_receipts(&self, message_id: Uuid) -> Result<Vec<MessageRead>>;
+    async fn list_user_conversations(&self, user_id: Uuid) -> Result<Vec<Conversation>>;
 }
 
 #[async_trait::async_trait]
@@ -41,6 +42,7 @@ pub trait ChatService: Send + Sync {
     async fn read_message(&self, user_id: Uuid, message_id: Uuid) -> Result<()>;
     async fn get_conversation_members(&self, conversation_id: Uuid) -> Result<Vec<Uuid>>;
     async fn get_message_by_id(&self, user_id: Uuid, message_id: Uuid) -> Result<Message>;
+    async fn list_user_conversations(&self, user_id: Uuid) -> Result<Vec<Conversation>>;
 }
 
 pub struct ChatRepositoryImpl {
@@ -274,6 +276,22 @@ impl ChatRepository for ChatRepositoryImpl {
         .await
         .map_err(AppError::Database)
     }
+
+    async fn list_user_conversations(&self, user_id: Uuid) -> Result<Vec<Conversation>> {
+        sqlx::query_as::<_, Conversation>(
+            r#"
+            SELECT c.id, c.title, c.is_group, c.created_at
+            FROM conversations c
+            JOIN conversation_members cm ON cm.conversation_id = c.id
+            WHERE cm.user_id = $1
+            ORDER BY c.created_at DESC
+            "#
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::Database)
+    }
 }
 
 pub struct ChatServiceImpl {
@@ -383,5 +401,9 @@ impl ChatService for ChatServiceImpl {
         }
 
         Ok(message)
+    }
+
+    async fn list_user_conversations(&self, user_id: Uuid) -> Result<Vec<Conversation>> {
+        self.repo.list_user_conversations(user_id).await
     }
 }

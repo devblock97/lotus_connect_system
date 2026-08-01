@@ -9,12 +9,14 @@ use crate::ws::types::WsMessage;
 #[derive(Clone)]
 pub struct WsManager {
     clients: Arc<RwLock<HashMap<Uuid, mpsc::UnboundedSender<Message>>>>,
+    active_conversations: Arc<RwLock<HashMap<Uuid, Uuid>>>,
 }
 
 impl WsManager {
     pub fn new() -> Self {
         Self {
             clients: Arc::new(RwLock::new(HashMap::new())),
+            active_conversations: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -29,7 +31,31 @@ impl WsManager {
     pub async fn remove_client(&self, user_id: Uuid) {
         let mut clients = self.clients.write().await;
         clients.remove(&user_id);
+
+        let mut active = self.active_conversations.write().await;
+        active.remove(&user_id);
+
         tracing::info!("User {} disconnected from WebSocket. Active connections: {}", user_id, clients.len());
+    }
+
+    /// Set the active conversation for a user
+    pub async fn set_active_conversation(&self, user_id: Uuid, conversation_id: Option<Uuid>) {
+        let mut active = self.active_conversations.write().await;
+        if let Some(conv_id) = conversation_id {
+            active.insert(user_id, conv_id);
+        } else {
+            active.remove(&user_id);
+        }
+    }
+
+    /// Check if a user is actively looking at a conversation
+    pub async fn is_viewing_conversation(&self, user_id: Uuid, conversation_id: Uuid) -> bool {
+        let active = self.active_conversations.read().await;
+        if let Some(active_conv_id) = active.get(&user_id) {
+            *active_conv_id == conversation_id
+        } else {
+            false
+        }
     }
 
     /// Send a message directly to a single online user

@@ -7,6 +7,8 @@ use errors::{AppError, Result};
 pub trait NotificationService: Send + Sync {
     async fn send_notification(&self, user_id: Uuid, title: &str, body: &str, data: Option<serde_json::Value>) -> Result<()>;
     async fn register_device(&self, user_id: Uuid, token: &str, platform: &str) -> Result<()>;
+    async fn get_notifications(&self, user_id: Uuid) -> Result<Vec<models::Notification>>;
+    async fn mark_all_read(&self, user_id: Uuid) -> Result<()>;
 }
 
 #[async_trait::async_trait]
@@ -96,5 +98,26 @@ impl NotificationService for NotificationServiceImpl {
         }
 
         Ok(())
+    }
+
+    async fn get_notifications(&self, user_id: Uuid) -> Result<Vec<models::Notification>> {
+        sqlx::query_as::<_, models::Notification>(
+            "SELECT id, user_id, title, body, data, is_read, created_at FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50"
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::Database)
+    }
+
+    async fn mark_all_read(&self, user_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "UPDATE notifications SET is_read = TRUE WHERE user_id = $1"
+        )
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map(|_| ())
+        .map_err(AppError::Database)
     }
 }
