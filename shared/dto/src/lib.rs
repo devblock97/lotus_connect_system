@@ -79,3 +79,18 @@ pub struct UserConversationResponse {
     pub peer_id: Option<Uuid>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct SendMessageRequest {
+    #[validate(length(min = 1, message = "Content cannot be empty"))]
+    pub content: String,
+    pub reply_to_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct EditMessageRequest {
+    #[validate(length(min = 1, message = "Content cannot be empty"))]
+    pub content: String,
+}

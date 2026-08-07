@@ -10,9 +10,10 @@ use auth::Claims;
 use dto::{
     RegisterRequest, LoginRequest, RefreshTokenRequest, 
     AuthResponse, UserResponse, TokenResponse, GenericResponse,
-    UserConversationResponse
+    UserConversationResponse, SendMessageRequest, EditMessageRequest
 };
 use crate::AppState;
+use crate::ws::types::WsMessage;
 
 pub async fn register_handler(
     State(state): State<AppState>,
@@ -313,5 +314,125 @@ pub async fn mark_notifications_read_handler(
     Ok(Json(GenericResponse {
         success: true,
         message: "Notifications marked as read".to_string(),
+    }))
+}
+
+pub async fn send_message_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(conversation_id): Path<Uuid>,
+    Json(payload): Json<SendMessageRequest>,
+) -> Result<Json<models::Message>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    
+    let message = state.chat_service.send_message(
+        claims.sub,
+        conversation_id,
+        &payload.content,
+        payload.reply_to_id,
+    ).await?;
+
+    // Broadcast to other connected WebSocket clients so they get it in real-time
+    let members = state.chat_service.get_conversation_members(conversation_id).await?;
+    state.ws_manager.broadcast_to_users(&members, WsMessage {
+        event: "chat:message".to_string(),
+        payload: serde_json::to_value(&message).unwrap_or(serde_json::Value::Null),
+    }).await;
+
+    // Broadcast new notification trigger
+    let sender_name = match state.user_service.get_user_by_id(claims.sub).await {
+        Ok(u) => u.full_name.unwrap_or(u.username),
+        Err(_) => "Someone".to_string(),
+    };
+    for member_id in &members {
+        if *member_id != claims.sub {
+            if !state.ws_manager.is_viewing_conversation(*member_id, conversation_id).await {
+                let title = format!("New message from {}", sender_name);
+                let body = payload.content.clone();
+                let payload_data = serde_json::json!({
+                    "type": "chat",
+                    "conversationId": conversation_id,
+                    "messageId": message.id,
+                });
+                let _ = state.notification_service.send_notification(
+                    *member_id,
+                    &title,
+                    &body,
+                    Some(payload_data.clone())
+                ).await;
+
+                state.ws_manager.send_to_user(
+                    *member_id,
+                    WsMessage {
+                        event: "notification:new".to_string(),
+                        payload: serde_json::json!({
+                            "id": uuid::Uuid::now_v7(),
+                            "userId": *member_id,
+                            "title": title,
+                            "body": body,
+                            "data": payload_data,
+                            "isRead": false,
+                            "createdAt": chrono::Utc::now(),
+                        }),
+                    }
+                ).await;
+            }
+        }
+    }
+
+    Ok(Json(message))
+}
+
+pub async fn edit_message_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(message_id): Path<Uuid>,
+    Json(payload): Json<EditMessageRequest>,
+) -> Result<Json<models::Message>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    
+    let message = state.chat_service.edit_message(
+        claims.sub,
+        message_id,
+        &payload.content,
+    ).await?;
+
+    // Broadcast the edit update to active chat participants
+    let members = state.chat_service.get_conversation_members(message.conversation_id).await?;
+    state.ws_manager.broadcast_to_users(&members, WsMessage {
+        event: "chat:edit".to_string(),
+        payload: serde_json::json!({
+            "messageId": message_id,
+            "content": message.content.clone(),
+            "isEdited": true,
+        }),
+    }).await;
+
+    Ok(Json(message))
+}
+
+pub async fn delete_message_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(message_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    let message = state.chat_service.get_message_by_id(claims.sub, message_id).await?;
+    let conversation_id = message.conversation_id;
+
+    state.chat_service.delete_message(claims.sub, message_id).await?;
+
+    // Broadcast delete to active chat participants
+    let members = state.chat_service.get_conversation_members(conversation_id).await?;
+    state.ws_manager.broadcast_to_users(&members, WsMessage {
+        event: "chat:delete".to_string(),
+        payload: serde_json::json!({
+            "messageId": message_id,
+            "conversationId": conversation_id,
+        }),
+    }).await;
+
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Message deleted successfully".to_string(),
     }))
 }
