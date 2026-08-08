@@ -220,6 +220,57 @@ async fn route_ws_event(
             Ok(())
         }
 
+        // Edit/update message content
+        "chat:edit" => {
+            let payload = msg.payload;
+            let msg_id_str = payload.get("messageId").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing messageId".to_string()))?;
+            let message_id = Uuid::parse_str(msg_id_str)
+                .map_err(|_| AppError::Validation("Invalid messageId".to_string()))?;
+
+            let content = payload.get("content").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing content".to_string()))?;
+
+            let message = state.chat_service.edit_message(sender_id, message_id, content).await?;
+            let members = state.chat_service.get_conversation_members(message.conversation_id).await?;
+
+            state.ws_manager.broadcast_to_users(&members, WsMessage {
+                event: "chat:edit".to_string(),
+                payload: serde_json::json!({
+                    "messageId": message_id,
+                    "content": message.content.clone(),
+                    "isEdited": true,
+                }),
+            }).await;
+
+            Ok(())
+        }
+
+        // Delete message
+        "chat:delete" => {
+            let payload = msg.payload;
+            let msg_id_str = payload.get("messageId").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing messageId".to_string()))?;
+            let message_id = Uuid::parse_str(msg_id_str)
+                .map_err(|_| AppError::Validation("Invalid messageId".to_string()))?;
+
+            let message = state.chat_service.get_message_by_id(sender_id, message_id).await?;
+            let conversation_id = message.conversation_id;
+
+            state.chat_service.delete_message(sender_id, message_id).await?;
+            let members = state.chat_service.get_conversation_members(conversation_id).await?;
+
+            state.ws_manager.broadcast_to_users(&members, WsMessage {
+                event: "chat:delete".to_string(),
+                payload: serde_json::json!({
+                    "messageId": message_id,
+                    "conversationId": conversation_id,
+                }),
+            }).await;
+
+            Ok(())
+        }
+
         // Active conversation focus tracking
         "chat:focus" => {
             let conversation_id = msg.payload.get("conversationId")
