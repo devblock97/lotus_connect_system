@@ -71,6 +71,12 @@ impl WsManager {
         false
     }
 
+    /// Check if a user is currently connected to WebSocket
+    pub async fn is_connected(&self, user_id: Uuid) -> bool {
+        let clients = self.clients.read().await;
+        clients.contains_key(&user_id)
+    }
+
     /// Broadcast a message to a list of user IDs (e.g. members of a conversation)
     pub async fn broadcast_to_users(&self, user_ids: &[Uuid], msg: WsMessage) {
         let clients = self.clients.read().await;
