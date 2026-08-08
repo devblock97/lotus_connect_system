@@ -53,6 +53,32 @@ async fn handle_socket(socket: WebSocket, user_id: Uuid, state: AppState) {
         tracing::error!("Failed to set user {} presence to online: {:?}", user_id, err);
     }
 
+    if let Ok(friends) = state.user_service.get_friends_list(user_id).await {
+        let friend_ids: Vec<uuid::Uuid> = friends.into_iter().map(|f| f.id).collect();
+        state.ws_manager.broadcast_to_users(&friend_ids, WsMessage {
+            event: "presence:status".to_string(),
+            payload: serde_json::json!({
+                "userId": user_id,
+                "isOnline": true,
+                "lastSeen": chrono::Utc::now(),
+            }),
+        }).await;
+
+        // Sync statuses of currently online friends to this newly connected user
+        for friend_id in friend_ids {
+            if state.ws_manager.is_connected(friend_id).await {
+                state.ws_manager.send_to_user(user_id, WsMessage {
+                    event: "presence:status".to_string(),
+                    payload: serde_json::json!({
+                        "userId": friend_id,
+                        "isOnline": true,
+                        "lastSeen": chrono::Utc::now(),
+                    }),
+                }).await;
+            }
+        }
+    }
+
     // 3. Outbound write loop task
     let write_task = tokio::spawn(async move {
         while let Some(message) = rx.recv().await {
@@ -92,6 +118,18 @@ async fn handle_socket(socket: WebSocket, user_id: Uuid, state: AppState) {
     state.ws_manager.remove_client(user_id).await;
     if let Err(err) = state.presence_service.set_status(user_id, "offline").await {
         tracing::error!("Failed to set user {} presence to offline: {:?}", user_id, err);
+    }
+
+    if let Ok(friends) = state.user_service.get_friends_list(user_id).await {
+        let friend_ids: Vec<uuid::Uuid> = friends.into_iter().map(|f| f.id).collect();
+        state.ws_manager.broadcast_to_users(&friend_ids, WsMessage {
+            event: "presence:status".to_string(),
+            payload: serde_json::json!({
+                "userId": user_id,
+                "isOnline": false,
+                "lastSeen": chrono::Utc::now(),
+            }),
+        }).await;
     }
 }
 
