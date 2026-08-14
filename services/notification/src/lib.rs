@@ -33,6 +33,97 @@ impl NotificationProvider for MockNotificationProvider {
     }
 }
 
+pub struct FcmNotificationProvider {
+    client: reqwest::Client,
+    server_key: Option<String>,
+}
+
+impl FcmNotificationProvider {
+    pub fn new(server_key: Option<String>) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            server_key,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl NotificationProvider for FcmNotificationProvider {
+    async fn send_push(
+        &self,
+        device_token: &str,
+        platform: &str,
+        title: &str,
+        body: &str,
+        data: Option<serde_json::Value>,
+    ) -> Result<()> {
+        let server_key = match &self.server_key {
+            Some(key) if !key.is_empty() => key,
+            _ => {
+                tracing::info!(
+                    "FCM server key not set. Logged push to device ({}): platform={}, title='{}', body='{}'",
+                    device_token,
+                    platform,
+                    title,
+                    body
+                );
+                return Ok(());
+            }
+        };
+
+        let is_call_invite = data
+            .as_ref()
+            .and_then(|d| d.get("type"))
+            .and_then(|t| t.as_str())
+            .map(|t| t == "call_invite")
+            .unwrap_or(false);
+
+        let priority = if is_call_invite { "high" } else { "normal" };
+
+        let payload = serde_json::json!({
+            "to": device_token,
+            "priority": priority,
+            "notification": {
+                "title": title,
+                "body": body,
+                "sound": "default"
+            },
+            "data": data.unwrap_or_else(|| serde_json::json!({}))
+        });
+
+        let response = self
+            .client
+            .post("https://fcm.googleapis.com/fcm/send")
+            .header("Authorization", format!("key={}", server_key))
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await;
+
+        match response {
+            Ok(res) if res.status().is_success() => {
+                tracing::info!("FCM Push successfully dispatched to {}", device_token);
+                Ok(())
+            }
+            Ok(res) => {
+                let status = res.status();
+                let err_text = res.text().await.unwrap_or_default();
+                tracing::warn!(
+                    "FCM Push failed with status {}: {} for token {}",
+                    status,
+                    err_text,
+                    device_token
+                );
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("FCM HTTP request error for token {}: {}", device_token, e);
+                Ok(())
+            }
+        }
+    }
+}
+
 pub struct NotificationServiceImpl {
     pool: PgPool,
     provider: Arc<dyn NotificationProvider>,
@@ -51,7 +142,7 @@ impl NotificationService for NotificationServiceImpl {
         sqlx::query(
             r#"
             INSERT INTO devices (id, user_id, token, platform, updated_at)
-            VALUES ($1, $2, $3, $4, NOW())
+            VALUES (, , , , NOW())
             ON CONFLICT (user_id, token) DO UPDATE SET updated_at = NOW()
             "#
         )
@@ -71,7 +162,7 @@ impl NotificationService for NotificationServiceImpl {
         sqlx::query(
             r#"
             INSERT INTO notifications (id, user_id, title, body, data, is_read)
-            VALUES ($1, $2, $3, $4, $5, FALSE)
+            VALUES (, , , , , FALSE)
             "#
         )
         .bind(notification_id)
@@ -84,17 +175,20 @@ impl NotificationService for NotificationServiceImpl {
         .map_err(AppError::Database)?;
 
         // 2. Resolve active target devices for this user
-        let devices = sqlx::query!(
-            "SELECT token, platform FROM devices WHERE user_id = $1",
-            user_id
+        let devices = sqlx::query(
+            "SELECT token, platform FROM devices WHERE user_id = "
         )
+        .bind(user_id)
         .fetch_all(&self.pool)
         .await
         .map_err(AppError::Database)?;
 
         // 3. Dispatch the push events via the active provider
         for device in devices {
-            let _ = self.provider.send_push(&device.token, &device.platform, title, body, data.clone()).await;
+            use sqlx::Row;
+            let token: String = device.get("token");
+            let platform: String = device.get("platform");
+            let _ = self.provider.send_push(&token, &platform, title, body, data.clone()).await;
         }
 
         Ok(())
@@ -102,7 +196,7 @@ impl NotificationService for NotificationServiceImpl {
 
     async fn get_notifications(&self, user_id: Uuid) -> Result<Vec<models::Notification>> {
         sqlx::query_as::<_, models::Notification>(
-            "SELECT id, user_id, title, body, data, is_read, created_at FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50"
+            "SELECT id, user_id, title, body, data, is_read, created_at FROM notifications WHERE user_id =  ORDER BY created_at DESC LIMIT 50"
         )
         .bind(user_id)
         .fetch_all(&self.pool)
@@ -112,7 +206,7 @@ impl NotificationService for NotificationServiceImpl {
 
     async fn mark_all_read(&self, user_id: Uuid) -> Result<()> {
         sqlx::query(
-            "UPDATE notifications SET is_read = TRUE WHERE user_id = $1"
+            "UPDATE notifications SET is_read = TRUE WHERE user_id = "
         )
         .bind(user_id)
         .execute(&self.pool)

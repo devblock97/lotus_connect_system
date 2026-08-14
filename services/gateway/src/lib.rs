@@ -104,6 +104,7 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .route("/friends/reject", post(handlers::reject_friend_handler))
         .route("/search", get(handlers::search_users_handler))
         .route("/devices", post(handlers::register_device_handler))
+        .route("/device-token", post(handlers::register_device_handler))
         .route("/notifications", get(handlers::list_notifications_handler))
         .route("/notifications/read", post(handlers::mark_notifications_read_handler))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));

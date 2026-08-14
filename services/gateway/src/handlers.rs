@@ -183,10 +183,28 @@ pub async fn create_private_chat_handler(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Json(payload): Json<CreatePrivateChatRequest>,
-) -> Result<Json<models::Conversation>> {
+) -> Result<Json<UserConversationResponse>> {
     payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
     let conv = state.chat_service.create_private_chat(claims.sub, payload.friend_id).await?;
-    Ok(Json(conv))
+
+    let mut title = conv.title.clone();
+    if title.is_none() || title.as_deref().unwrap_or("").trim().is_empty() {
+        if let Ok(peer_user) = state.user_service.get_user_by_id(payload.friend_id).await {
+            let display_name = peer_user
+                .full_name
+                .filter(|n| !n.trim().is_empty())
+                .unwrap_or(peer_user.username);
+            title = Some(display_name);
+        }
+    }
+
+    Ok(Json(UserConversationResponse {
+        id: conv.id,
+        title,
+        is_group: conv.is_group,
+        peer_id: Some(payload.friend_id),
+        created_at: conv.created_at,
+    }))
 }
 
 #[derive(serde::Deserialize, Validate)]
@@ -223,13 +241,26 @@ pub async fn list_conversations_handler(
     let mut responses = Vec::new();
     for conv in conversations {
         let mut peer_id = None;
+        let mut title = conv.title;
         if !conv.is_group {
             let members = state.chat_service.get_conversation_members(conv.id).await?;
             peer_id = members.into_iter().find(|&id| id != claims.sub);
+            let target_user_id = peer_id.unwrap_or(claims.sub);
+            if title.is_none() || title.as_deref().unwrap_or("").trim().is_empty() {
+                if let Ok(peer_user) = state.user_service.get_user_by_id(target_user_id).await {
+                    let display_name = peer_user
+                        .full_name
+                        .filter(|n| !n.trim().is_empty())
+                        .unwrap_or(peer_user.username);
+                    title = Some(display_name);
+                } else {
+                    tracing::warn!("Failed to fetch user info for peer_id {}", target_user_id);
+                }
+            }
         }
         responses.push(UserConversationResponse {
             id: conv.id,
-            title: conv.title,
+            title,
             is_group: conv.is_group,
             peer_id,
             created_at: conv.created_at,
@@ -237,6 +268,8 @@ pub async fn list_conversations_handler(
     }
     Ok(Json(responses))
 }
+
+
 
 pub async fn get_messages_handler(
     State(state): State<AppState>,
