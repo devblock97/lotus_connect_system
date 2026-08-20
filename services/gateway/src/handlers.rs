@@ -68,6 +68,26 @@ pub async fn add_friend_handler(
 ) -> Result<Json<models::Friendship>> {
     payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
     let friendship = state.user_service.send_friend_request(claims.sub, &payload.username).await?;
+
+    // Trigger async push notification to the friend
+    let sender_name = match state.user_service.get_user_by_id(claims.sub).await {
+        Ok(u) => u.full_name.filter(|n| !n.trim().is_empty()).unwrap_or(u.username),
+        Err(_) => "Someone".to_string(),
+    };
+
+    let notif_title = "New Friend Request".to_string();
+    let notif_body = format!("{} sent you a friend request.", sender_name);
+    let notif_data = serde_json::json!({
+        "type": "friend_request",
+        "senderId": claims.sub
+    });
+
+    let notif_service = state.notification_service.clone();
+    let friend_id = friendship.friend_id;
+    tokio::spawn(async move {
+        let _ = notif_service.send_notification(friend_id, &notif_title, &notif_body, Some(notif_data)).await;
+    });
+
     Ok(Json(friendship))
 }
 
@@ -83,11 +103,32 @@ pub async fn accept_friend_handler(
     Json(payload): Json<AcceptFriendRequest>,
 ) -> Result<Json<GenericResponse>> {
     state.user_service.accept_friend_request(claims.sub, payload.friend_id).await?;
+
+    // Trigger async push notification to the friend
+    let sender_name = match state.user_service.get_user_by_id(claims.sub).await {
+        Ok(u) => u.full_name.filter(|n| !n.trim().is_empty()).unwrap_or(u.username),
+        Err(_) => "Someone".to_string(),
+    };
+
+    let notif_title = "Friend Request Accepted".to_string();
+    let notif_body = format!("{} accepted your friend request.", sender_name);
+    let notif_data = serde_json::json!({
+        "type": "friend_accept",
+        "senderId": claims.sub
+    });
+
+    let notif_service = state.notification_service.clone();
+    let friend_id = payload.friend_id;
+    tokio::spawn(async move {
+        let _ = notif_service.send_notification(friend_id, &notif_title, &notif_body, Some(notif_data)).await;
+    });
+
     Ok(Json(GenericResponse {
         success: true,
         message: "Friend request accepted successfully".to_string(),
     }))
 }
+
 
 #[derive(serde::Deserialize, Validate)]
 #[serde(rename_all = "camelCase")]
@@ -330,6 +371,26 @@ pub async fn register_device_handler(
         message: "Device registered successfully".to_string(),
     }))
 }
+
+#[derive(serde::Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct UnregisterDeviceRequest {
+    pub token: String,
+}
+
+pub async fn unregister_device_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(payload): Json<UnregisterDeviceRequest>,
+) -> Result<Json<GenericResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    state.notification_service.unregister_device(claims.sub, &payload.token).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Device unregistered successfully".to_string(),
+    }))
+}
+
 
 pub async fn list_notifications_handler(
     State(state): State<AppState>,

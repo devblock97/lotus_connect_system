@@ -17,3 +17,7 @@ uuid = { workspace = true }
 sqlx = { workspace = true }
 tracing = { workspace = true }
 reqwest = { workspace = true }
+jsonwebtoken = { workspace = true }
+chrono = { workspace = true }
+futures-util = { workspace = true }
+

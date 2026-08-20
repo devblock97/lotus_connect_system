@@ -63,11 +63,23 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
 
     let storage_provider = service_upload::create_storage_provider(&config);
 
-    let notification_provider = Arc::new(service_notification::MockNotificationProvider);
+    let notification_provider: Arc<dyn service_notification::NotificationProvider> =
+        if let Some(key) = service_notification::ServiceAccountKey::from_env() {
+            tracing::info!(
+                "FCM Service Account initialized for project '{}'. Using FcmV1NotificationProvider.",
+                key.project_id
+            );
+            Arc::new(service_notification::FcmV1NotificationProvider::new(key))
+        } else {
+            tracing::info!("FCM Service Account not configured. Using MockNotificationProvider.");
+            Arc::new(service_notification::MockNotificationProvider)
+        };
+
     let notification_service = Arc::new(service_notification::NotificationServiceImpl::new(
         pool.clone(),
         notification_provider,
     ));
+
 
     let ws_manager = ws::manager::WsManager::new();
 
@@ -104,7 +116,9 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .route("/friends/reject", post(handlers::reject_friend_handler))
         .route("/search", get(handlers::search_users_handler))
         .route("/devices", post(handlers::register_device_handler))
+        .route("/devices/unregister", post(handlers::unregister_device_handler))
         .route("/device-token", post(handlers::register_device_handler))
+
         .route("/notifications", get(handlers::list_notifications_handler))
         .route("/notifications/read", post(handlers::mark_notifications_read_handler))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
