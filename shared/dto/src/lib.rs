@@ -78,14 +78,21 @@ pub struct UserConversationResponse {
     pub is_group: bool,
     pub peer_id: Option<Uuid>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(rename_all = "camelCase")]
 pub struct SendMessageRequest {
-    #[validate(length(min = 1, message = "Content cannot be empty"))]
-    pub content: String,
+    pub content: Option<String>,
+    pub message_type: Option<String>,
     pub reply_to_id: Option<Uuid>,
+    pub media_url: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub file_name: Option<String>,
+    pub file_size: Option<i64>,
+    pub mime_type: Option<String>,
+    pub duration: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
@@ -93,4 +100,20 @@ pub struct SendMessageRequest {
 pub struct EditMessageRequest {
     #[validate(length(min = 1, message = "Content cannot be empty"))]
     pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct AddReactionRequest {
+    #[validate(length(min = 1, max = 32, message = "Reaction cannot be empty"))]
+    pub reaction: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageReactionResponse {
+    pub message_id: Uuid,
+    pub user_id: Uuid,
+    pub reaction: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }

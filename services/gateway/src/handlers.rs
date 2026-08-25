@@ -10,7 +10,8 @@ use auth::Claims;
 use dto::{
     RegisterRequest, LoginRequest, RefreshTokenRequest, 
     AuthResponse, UserResponse, TokenResponse, GenericResponse,
-    UserConversationResponse, SendMessageRequest, EditMessageRequest
+    UserConversationResponse, SendMessageRequest, EditMessageRequest,
+    AddReactionRequest, MessageReactionResponse
 };
 use crate::AppState;
 use crate::ws::types::WsMessage;
@@ -245,6 +246,7 @@ pub async fn create_private_chat_handler(
         is_group: conv.is_group,
         peer_id: Some(payload.friend_id),
         created_at: conv.created_at,
+        updated_at: conv.updated_at,
     }))
 }
 
@@ -305,6 +307,7 @@ pub async fn list_conversations_handler(
             is_group: conv.is_group,
             peer_id,
             created_at: conv.created_at,
+            updated_at: conv.updated_at,
         });
     }
     Ok(Json(responses))
@@ -419,11 +422,11 @@ pub async fn send_message_handler(
 ) -> Result<Json<models::Message>> {
     payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
     
+    let content_text = payload.content.clone().unwrap_or_default();
     let message = state.chat_service.send_message(
         claims.sub,
         conversation_id,
-        &payload.content,
-        payload.reply_to_id,
+        payload,
     ).await?;
 
     // Broadcast to other connected WebSocket clients so they get it in real-time
@@ -442,7 +445,7 @@ pub async fn send_message_handler(
         if *member_id != claims.sub {
             if !state.ws_manager.is_viewing_conversation(*member_id, conversation_id).await {
                 let title = format!("New message from {}", sender_name);
-                let body = payload.content.clone();
+                let body = if !content_text.is_empty() { content_text.clone() } else { format!("[{}]", message.message_type) };
                 let payload_data = serde_json::json!({
                     "type": "chat",
                     "conversationId": conversation_id,
@@ -475,6 +478,81 @@ pub async fn send_message_handler(
     }
 
     Ok(Json(message))
+}
+
+pub async fn add_reaction_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(message_id): Path<Uuid>,
+    Json(payload): Json<AddReactionRequest>,
+) -> Result<Json<MessageReactionResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    
+    let reaction_model = state.chat_service.add_reaction(claims.sub, message_id, &payload.reaction).await?;
+    
+    if let Ok(msg) = state.chat_service.get_message_by_id(claims.sub, message_id).await {
+        if let Ok(members) = state.chat_service.get_conversation_members(msg.conversation_id).await {
+            state.ws_manager.broadcast_to_users(&members, WsMessage {
+                event: "chat:reaction_add".to_string(),
+                payload: serde_json::json!({
+                    "messageId": message_id,
+                    "conversationId": msg.conversation_id,
+                    "userId": claims.sub,
+                    "reaction": payload.reaction,
+                }),
+            }).await;
+        }
+    }
+
+    Ok(Json(MessageReactionResponse {
+        message_id: reaction_model.message_id,
+        user_id: reaction_model.user_id,
+        reaction: reaction_model.reaction,
+        created_at: reaction_model.created_at,
+    }))
+}
+
+pub async fn remove_reaction_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path((message_id, reaction)): Path<(Uuid, String)>,
+) -> Result<Json<GenericResponse>> {
+    state.chat_service.remove_reaction(claims.sub, message_id, &reaction).await?;
+    
+    if let Ok(msg) = state.chat_service.get_message_by_id(claims.sub, message_id).await {
+        if let Ok(members) = state.chat_service.get_conversation_members(msg.conversation_id).await {
+            state.ws_manager.broadcast_to_users(&members, WsMessage {
+                event: "chat:reaction_remove".to_string(),
+                payload: serde_json::json!({
+                    "messageId": message_id,
+                    "conversationId": msg.conversation_id,
+                    "userId": claims.sub,
+                    "reaction": reaction,
+                }),
+            }).await;
+        }
+    }
+
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Reaction removed".to_string(),
+    }))
+}
+
+pub async fn get_reactions_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(message_id): Path<Uuid>,
+) -> Result<Json<Vec<MessageReactionResponse>>> {
+    let reactions = state.chat_service.get_message_reactions(claims.sub, message_id).await?;
+    let response = reactions.into_iter().map(|r| MessageReactionResponse {
+        message_id: r.message_id,
+        user_id: r.user_id,
+        reaction: r.reaction,
+        created_at: r.created_at,
+    }).collect();
+
+    Ok(Json(response))
 }
 
 pub async fn edit_message_handler(

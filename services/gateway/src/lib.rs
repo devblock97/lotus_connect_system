@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use axum::{
-    routing::{get, post, put},
+    routing::{get, post, put, delete},
     middleware as axum_middleware,
     Router,
     Extension,
@@ -130,6 +130,8 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .route("/group", post(handlers::create_group_chat_handler))
         .route("/:conversation_id/messages", get(handlers::get_messages_handler).post(handlers::send_message_handler))
         .route("/messages/:message_id", put(handlers::edit_message_handler).delete(handlers::delete_message_handler))
+        .route("/messages/:message_id/reactions", get(handlers::get_reactions_handler).post(handlers::add_reaction_handler))
+        .route("/messages/:message_id/reactions/:reaction", delete(handlers::remove_reaction_handler))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
     // 7. Build Calls router (protected by auth)

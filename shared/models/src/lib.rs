@@ -46,6 +46,7 @@ pub struct Conversation {
     pub title: Option<String>,
     pub is_group: bool,
     pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -62,11 +63,19 @@ pub struct Message {
     pub conversation_id: Uuid,
     pub sender_id: Uuid,
     pub content: String,
-    pub message_type: String, // 'text', 'image', 'video', 'file', 'call_log'
+    pub message_type: String, // 'text', 'image', 'video', 'audio', 'voice', 'file', 'call_log'
     pub reply_to_id: Option<Uuid>,
+    pub media_url: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub file_name: Option<String>,
+    pub file_size: Option<i64>,
+    pub mime_type: Option<String>,
+    pub duration: Option<i32>,
     pub is_edited: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[sqlx(skip)]
+    pub reactions: Option<Vec<MessageReactionGroup>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -74,6 +83,22 @@ pub struct MessageRead {
     pub message_id: Uuid,
     pub user_id: Uuid,
     pub read_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct MessageReaction {
+    pub id: Uuid,
+    pub message_id: Uuid,
+    pub user_id: Uuid,
+    pub reaction: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageReactionGroup {
+    pub reaction: String,
+    pub count: i64,
+    pub users: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

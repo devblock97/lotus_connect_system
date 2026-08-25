@@ -18,14 +18,33 @@ pub trait ChatRepository: Send + Sync {
     async fn create_group(&self, id: Uuid, conversation_id: Uuid, name: &str, description: Option<&str>, created_by: Uuid) -> Result<Group>;
     async fn find_group_by_conversation(&self, conversation_id: Uuid) -> Result<Option<Group>>;
 
-    async fn create_message(&self, id: Uuid, conversation_id: Uuid, sender_id: Uuid, content: &str, message_type: &str, reply_to_id: Option<Uuid>) -> Result<Message>;
+    async fn create_message(
+        &self,
+        id: Uuid,
+        conversation_id: Uuid,
+        sender_id: Uuid,
+        content: &str,
+        message_type: &str,
+        reply_to_id: Option<Uuid>,
+        media_url: Option<&str>,
+        thumbnail_url: Option<&str>,
+        file_name: Option<&str>,
+        file_size: Option<i64>,
+        mime_type: Option<&str>,
+        duration: Option<i32>,
+    ) -> Result<Message>;
     async fn find_message(&self, id: Uuid) -> Result<Option<Message>>;
     async fn update_message_content(&self, id: Uuid, content: &str) -> Result<Message>;
     async fn delete_message(&self, id: Uuid) -> Result<()>;
     async fn list_messages_paginated(&self, conversation_id: Uuid, cursor: Option<Uuid>, limit: i64) -> Result<Vec<Message>>;
     
+    async fn add_reaction(&self, id: Uuid, message_id: Uuid, user_id: Uuid, reaction: &str) -> Result<models::MessageReaction>;
+    async fn remove_reaction(&self, message_id: Uuid, user_id: Uuid, reaction: &str) -> Result<()>;
+    async fn get_message_reactions(&self, message_id: Uuid) -> Result<Vec<models::MessageReaction>>;
+
     async fn mark_as_read(&self, message_id: Uuid, user_id: Uuid) -> Result<()>;
     async fn get_read_receipts(&self, message_id: Uuid) -> Result<Vec<MessageRead>>;
+    async fn touch_conversation(&self, conversation_id: Uuid) -> Result<()>;
     async fn list_user_conversations(&self, user_id: Uuid) -> Result<Vec<Conversation>>;
 }
 
@@ -34,10 +53,14 @@ pub trait ChatService: Send + Sync {
     async fn create_private_chat(&self, creator_id: Uuid, friend_id: Uuid) -> Result<Conversation>;
     async fn create_group_chat(&self, creator_id: Uuid, name: &str, description: Option<&str>, members: Vec<Uuid>) -> Result<Group>;
     
-    async fn send_message(&self, sender_id: Uuid, conversation_id: Uuid, content: &str, reply_to_id: Option<Uuid>) -> Result<Message>;
+    async fn send_message(&self, sender_id: Uuid, conversation_id: Uuid, req: dto::SendMessageRequest) -> Result<Message>;
     async fn edit_message(&self, sender_id: Uuid, message_id: Uuid, content: &str) -> Result<Message>;
     async fn delete_message(&self, sender_id: Uuid, message_id: Uuid) -> Result<()>;
     
+    async fn add_reaction(&self, user_id: Uuid, message_id: Uuid, reaction: &str) -> Result<models::MessageReaction>;
+    async fn remove_reaction(&self, user_id: Uuid, message_id: Uuid, reaction: &str) -> Result<()>;
+    async fn get_message_reactions(&self, user_id: Uuid, message_id: Uuid) -> Result<Vec<models::MessageReaction>>;
+
     async fn get_messages(&self, user_id: Uuid, conversation_id: Uuid, cursor: Option<Uuid>, limit: i64) -> Result<Vec<Message>>;
     async fn read_message(&self, user_id: Uuid, message_id: Uuid) -> Result<()>;
     async fn get_conversation_members(&self, conversation_id: Uuid) -> Result<Vec<Uuid>>;
@@ -59,7 +82,7 @@ impl ChatRepositoryImpl {
 impl ChatRepository for ChatRepositoryImpl {
     async fn create_conversation(&self, id: Uuid, title: Option<&str>, is_group: bool) -> Result<Conversation> {
         sqlx::query_as::<_, Conversation>(
-            "INSERT INTO conversations (id, title, is_group) VALUES ($1, $2, $3) RETURNING id, title, is_group, created_at"
+            "INSERT INTO conversations (id, title, is_group) VALUES ($1, $2, $3) RETURNING id, title, is_group, created_at, updated_at"
         )
         .bind(id)
         .bind(title)
@@ -71,7 +94,7 @@ impl ChatRepository for ChatRepositoryImpl {
 
     async fn find_conversation(&self, id: Uuid) -> Result<Option<Conversation>> {
         sqlx::query_as::<_, Conversation>(
-            "SELECT id, title, is_group, created_at FROM conversations WHERE id = $1"
+            "SELECT id, title, is_group, created_at, updated_at FROM conversations WHERE id = $1"
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -83,7 +106,7 @@ impl ChatRepository for ChatRepositoryImpl {
         // Query to check if a 1-to-1 conversation exists containing both users
         sqlx::query_as::<_, Conversation>(
             r#"
-            SELECT c.id, c.title, c.is_group, c.created_at
+            SELECT c.id, c.title, c.is_group, c.created_at, c.updated_at
             FROM conversations c
             JOIN conversation_members m1 ON m1.conversation_id = c.id
             JOIN conversation_members m2 ON m2.conversation_id = c.id
@@ -171,9 +194,31 @@ impl ChatRepository for ChatRepositoryImpl {
         .map_err(AppError::Database)
     }
 
-    async fn create_message(&self, id: Uuid, conversation_id: Uuid, sender_id: Uuid, content: &str, message_type: &str, reply_to_id: Option<Uuid>) -> Result<Message> {
+    async fn create_message(
+        &self,
+        id: Uuid,
+        conversation_id: Uuid,
+        sender_id: Uuid,
+        content: &str,
+        message_type: &str,
+        reply_to_id: Option<Uuid>,
+        media_url: Option<&str>,
+        thumbnail_url: Option<&str>,
+        file_name: Option<&str>,
+        file_size: Option<i64>,
+        mime_type: Option<&str>,
+        duration: Option<i32>,
+    ) -> Result<Message> {
         sqlx::query_as::<_, Message>(
-            "INSERT INTO messages (id, conversation_id, sender_id, content, message_type, reply_to_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, conversation_id, sender_id, content, message_type, reply_to_id, is_edited, created_at, updated_at"
+            r#"
+            INSERT INTO messages (
+                id, conversation_id, sender_id, content, message_type, reply_to_id,
+                media_url, thumbnail_url, file_name, file_size, mime_type, duration
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            RETURNING id, conversation_id, sender_id, content, message_type, reply_to_id,
+                      media_url, thumbnail_url, file_name, file_size, mime_type, duration,
+                      is_edited, created_at, updated_at
+            "#
         )
         .bind(id)
         .bind(conversation_id)
@@ -181,6 +226,12 @@ impl ChatRepository for ChatRepositoryImpl {
         .bind(content)
         .bind(message_type)
         .bind(reply_to_id)
+        .bind(media_url)
+        .bind(thumbnail_url)
+        .bind(file_name)
+        .bind(file_size)
+        .bind(mime_type)
+        .bind(duration)
         .fetch_one(&self.pool)
         .await
         .map_err(AppError::Database)
@@ -188,7 +239,12 @@ impl ChatRepository for ChatRepositoryImpl {
 
     async fn find_message(&self, id: Uuid) -> Result<Option<Message>> {
         sqlx::query_as::<_, Message>(
-            "SELECT id, conversation_id, sender_id, content, message_type, reply_to_id, is_edited, created_at, updated_at FROM messages WHERE id = $1"
+            r#"
+            SELECT id, conversation_id, sender_id, content, message_type, reply_to_id,
+                   media_url, thumbnail_url, file_name, file_size, mime_type, duration,
+                   is_edited, created_at, updated_at
+            FROM messages WHERE id = $1
+            "#
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -198,7 +254,12 @@ impl ChatRepository for ChatRepositoryImpl {
 
     async fn update_message_content(&self, id: Uuid, content: &str) -> Result<Message> {
         sqlx::query_as::<_, Message>(
-            "UPDATE messages SET content = $2, is_edited = TRUE, updated_at = NOW() WHERE id = $1 RETURNING id, conversation_id, sender_id, content, message_type, reply_to_id, is_edited, created_at, updated_at"
+            r#"
+            UPDATE messages SET content = $2, is_edited = TRUE, updated_at = NOW() WHERE id = $1
+            RETURNING id, conversation_id, sender_id, content, message_type, reply_to_id,
+                      media_url, thumbnail_url, file_name, file_size, mime_type, duration,
+                      is_edited, created_at, updated_at
+            "#
         )
         .bind(id)
         .bind(content)
@@ -221,7 +282,9 @@ impl ChatRepository for ChatRepositoryImpl {
             None => {
                 sqlx::query_as::<_, Message>(
                     r#"
-                    SELECT id, conversation_id, sender_id, content, message_type, reply_to_id, is_edited, created_at, updated_at
+                    SELECT id, conversation_id, sender_id, content, message_type, reply_to_id,
+                           media_url, thumbnail_url, file_name, file_size, mime_type, duration,
+                           is_edited, created_at, updated_at
                     FROM messages
                     WHERE conversation_id = $1
                     ORDER BY created_at DESC
@@ -237,7 +300,9 @@ impl ChatRepository for ChatRepositoryImpl {
             Some(cursor_id) => {
                 sqlx::query_as::<_, Message>(
                     r#"
-                    SELECT id, conversation_id, sender_id, content, message_type, reply_to_id, is_edited, created_at, updated_at
+                    SELECT id, conversation_id, sender_id, content, message_type, reply_to_id,
+                           media_url, thumbnail_url, file_name, file_size, mime_type, duration,
+                           is_edited, created_at, updated_at
                     FROM messages
                     WHERE conversation_id = $1 
                       AND created_at < (SELECT created_at FROM messages WHERE id = $2)
@@ -253,6 +318,45 @@ impl ChatRepository for ChatRepositoryImpl {
                 .map_err(AppError::Database)
             }
         }
+    }
+
+    async fn add_reaction(&self, id: Uuid, message_id: Uuid, user_id: Uuid, reaction: &str) -> Result<models::MessageReaction> {
+        sqlx::query_as::<_, models::MessageReaction>(
+            r#"
+            INSERT INTO message_reactions (id, message_id, user_id, reaction)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (message_id, user_id, reaction) DO UPDATE SET created_at = NOW()
+            RETURNING id, message_id, user_id, reaction, created_at
+            "#
+        )
+        .bind(id)
+        .bind(message_id)
+        .bind(user_id)
+        .bind(reaction)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(AppError::Database)
+    }
+
+    async fn remove_reaction(&self, message_id: Uuid, user_id: Uuid, reaction: &str) -> Result<()> {
+        sqlx::query("DELETE FROM message_reactions WHERE message_id = $1 AND user_id = $2 AND reaction = $3")
+            .bind(message_id)
+            .bind(user_id)
+            .bind(reaction)
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(AppError::Database)
+    }
+
+    async fn get_message_reactions(&self, message_id: Uuid) -> Result<Vec<models::MessageReaction>> {
+        sqlx::query_as::<_, models::MessageReaction>(
+            "SELECT id, message_id, user_id, reaction, created_at FROM message_reactions WHERE message_id = $1 ORDER BY created_at ASC"
+        )
+        .bind(message_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::Database)
     }
 
     async fn mark_as_read(&self, message_id: Uuid, user_id: Uuid) -> Result<()> {
@@ -277,14 +381,23 @@ impl ChatRepository for ChatRepositoryImpl {
         .map_err(AppError::Database)
     }
 
+    async fn touch_conversation(&self, conversation_id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE conversations SET updated_at = NOW() WHERE id = $1")
+            .bind(conversation_id)
+            .execute(&self.pool)
+            .await
+            .map(|_| ())
+            .map_err(AppError::Database)
+    }
+
     async fn list_user_conversations(&self, user_id: Uuid) -> Result<Vec<Conversation>> {
         sqlx::query_as::<_, Conversation>(
             r#"
-            SELECT c.id, c.title, c.is_group, c.created_at
+            SELECT c.id, c.title, c.is_group, c.created_at, c.updated_at
             FROM conversations c
             JOIN conversation_members cm ON cm.conversation_id = c.id
             WHERE cm.user_id = $1
-            ORDER BY c.created_at DESC
+            ORDER BY c.updated_at DESC
             "#
         )
         .bind(user_id)
@@ -338,13 +451,32 @@ impl ChatService for ChatServiceImpl {
         Ok(group)
     }
 
-    async fn send_message(&self, sender_id: Uuid, conversation_id: Uuid, content: &str, reply_to_id: Option<Uuid>) -> Result<Message> {
+    async fn send_message(&self, sender_id: Uuid, conversation_id: Uuid, req: dto::SendMessageRequest) -> Result<Message> {
         if !self.repo.is_member(conversation_id, sender_id).await? {
             return Err(AppError::Authorization("User is not a member of this conversation".to_string()));
         }
 
+        let message_type = req.message_type.as_deref().unwrap_or("text");
+        let content = req.content.as_deref().unwrap_or("");
+
         let message_id = Uuid::now_v7();
-        self.repo.create_message(message_id, conversation_id, sender_id, content, "text", reply_to_id).await
+        let message = self.repo.create_message(
+            message_id,
+            conversation_id,
+            sender_id,
+            content,
+            message_type,
+            req.reply_to_id,
+            req.media_url.as_deref(),
+            req.thumbnail_url.as_deref(),
+            req.file_name.as_deref(),
+            req.file_size,
+            req.mime_type.as_deref(),
+            req.duration,
+        ).await?;
+
+        let _ = self.repo.touch_conversation(conversation_id).await;
+        Ok(message)
     }
 
     async fn edit_message(&self, sender_id: Uuid, message_id: Uuid, content: &str) -> Result<Message> {
@@ -369,12 +501,64 @@ impl ChatService for ChatServiceImpl {
         self.repo.delete_message(message_id).await
     }
 
+    async fn add_reaction(&self, user_id: Uuid, message_id: Uuid, reaction: &str) -> Result<models::MessageReaction> {
+        let message = self.repo.find_message(message_id).await?
+            .ok_or_else(|| AppError::NotFound("Message not found".to_string()))?;
+
+        if !self.repo.is_member(message.conversation_id, user_id).await? {
+            return Err(AppError::Authorization("User is not a member of this conversation".to_string()));
+        }
+
+        let reaction_id = Uuid::now_v7();
+        self.repo.add_reaction(reaction_id, message_id, user_id, reaction).await
+    }
+
+    async fn remove_reaction(&self, user_id: Uuid, message_id: Uuid, reaction: &str) -> Result<()> {
+        let message = self.repo.find_message(message_id).await?
+            .ok_or_else(|| AppError::NotFound("Message not found".to_string()))?;
+
+        if !self.repo.is_member(message.conversation_id, user_id).await? {
+            return Err(AppError::Authorization("User is not a member of this conversation".to_string()));
+        }
+
+        self.repo.remove_reaction(message_id, user_id, reaction).await
+    }
+
+    async fn get_message_reactions(&self, user_id: Uuid, message_id: Uuid) -> Result<Vec<models::MessageReaction>> {
+        let message = self.repo.find_message(message_id).await?
+            .ok_or_else(|| AppError::NotFound("Message not found".to_string()))?;
+
+        if !self.repo.is_member(message.conversation_id, user_id).await? {
+            return Err(AppError::Authorization("User is not a member of this conversation".to_string()));
+        }
+
+        self.repo.get_message_reactions(message_id).await
+    }
+
     async fn get_messages(&self, user_id: Uuid, conversation_id: Uuid, cursor: Option<Uuid>, limit: i64) -> Result<Vec<Message>> {
         if !self.repo.is_member(conversation_id, user_id).await? {
             return Err(AppError::Authorization("User is not a member of this conversation".to_string()));
         }
 
-        self.repo.list_messages_paginated(conversation_id, cursor, limit).await
+        let mut messages = self.repo.list_messages_paginated(conversation_id, cursor, limit).await?;
+        for msg in &mut messages {
+            if let Ok(raw_reactions) = self.repo.get_message_reactions(msg.id).await {
+                if !raw_reactions.is_empty() {
+                    use std::collections::HashMap;
+                    let mut groups: HashMap<String, (i64, Vec<Uuid>)> = HashMap::new();
+                    for r in raw_reactions {
+                        let entry = groups.entry(r.reaction).or_insert((0, Vec::new()));
+                        entry.0 += 1;
+                        entry.1.push(r.user_id);
+                    }
+                    let reaction_groups = groups.into_iter().map(|(reaction, (count, users))| {
+                        models::MessageReactionGroup { reaction, count, users }
+                    }).collect();
+                    msg.reactions = Some(reaction_groups);
+                }
+            }
+        }
+        Ok(messages)
     }
 
     async fn read_message(&self, user_id: Uuid, message_id: Uuid) -> Result<()> {
@@ -393,11 +577,27 @@ impl ChatService for ChatServiceImpl {
     }
 
     async fn get_message_by_id(&self, user_id: Uuid, message_id: Uuid) -> Result<Message> {
-        let message = self.repo.find_message(message_id).await?
+        let mut message = self.repo.find_message(message_id).await?
             .ok_or_else(|| AppError::NotFound("Message not found".to_string()))?;
 
         if !self.repo.is_member(message.conversation_id, user_id).await? {
             return Err(AppError::Authorization("User is not a member of this conversation".to_string()));
+        }
+
+        if let Ok(raw_reactions) = self.repo.get_message_reactions(message.id).await {
+            if !raw_reactions.is_empty() {
+                use std::collections::HashMap;
+                let mut groups: HashMap<String, (i64, Vec<Uuid>)> = HashMap::new();
+                for r in raw_reactions {
+                    let entry = groups.entry(r.reaction).or_insert((0, Vec::new()));
+                    entry.0 += 1;
+                    entry.1.push(r.user_id);
+                }
+                let reaction_groups = groups.into_iter().map(|(reaction, (count, users))| {
+                    models::MessageReactionGroup { reaction, count, users }
+                }).collect();
+                message.reactions = Some(reaction_groups);
+            }
         }
 
         Ok(message)
