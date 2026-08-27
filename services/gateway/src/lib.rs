@@ -155,6 +155,7 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
 
     // 10. Base App Router
     let app = Router::new()
+        .nest_service("/uploads", tower_http::services::ServeDir::new(&config.upload_dir))
         .nest("/api/v1", api_router)
         .route("/health", get(health_handler))
         .layer(cors)
