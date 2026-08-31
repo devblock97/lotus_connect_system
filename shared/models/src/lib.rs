@@ -126,6 +126,10 @@ pub struct Group {
 pub struct Call {
     pub id: Uuid,
     pub host_id: Uuid,
+    #[sqlx(default)]
+    pub host_name: Option<String>,
+    #[sqlx(default)]
+    pub username: Option<String>,
     pub conversation_id: Option<Uuid>,
     pub channel_id: String,
     pub is_video: bool,
