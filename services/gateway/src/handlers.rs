@@ -149,6 +149,36 @@ pub async fn reject_friend_handler(
     }))
 }
 
+#[derive(serde::Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteFriendRequest {
+    pub friend_id: Uuid,
+}
+
+pub async fn delete_friend_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(friend_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    state.user_service.delete_friend(claims.sub, friend_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Friend removed successfully".to_string(),
+    }))
+}
+
+pub async fn remove_friend_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(payload): Json<DeleteFriendRequest>,
+) -> Result<Json<GenericResponse>> {
+    state.user_service.delete_friend(claims.sub, payload.friend_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Friend removed successfully".to_string(),
+    }))
+}
+
 pub async fn list_friends_handler(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
@@ -269,9 +299,9 @@ pub async fn create_group_chat_handler(
     Ok(Json(group))
 }
 
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, serde::Deserialize)]
 pub struct GetMessagesQuery {
+    #[serde(alias = "cursor_id", alias = "cursorId")]
     pub cursor: Option<Uuid>,
     pub limit: Option<i64>,
 }
@@ -321,7 +351,7 @@ pub async fn get_messages_handler(
     Path(conversation_id): Path<Uuid>,
     Query(query): Query<GetMessagesQuery>,
 ) -> Result<Json<Vec<models::Message>>> {
-    let limit = query.limit.unwrap_or(20);
+    let limit = query.limit.unwrap_or(25).clamp(1, 100);
     let messages = state.chat_service.get_messages(claims.sub, conversation_id, query.cursor, limit).await?;
     Ok(Json(messages))
 }
@@ -624,4 +654,33 @@ pub async fn delete_message_handler(
         success: true,
         message: "Message deleted successfully".to_string(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_messages_query_defaults_and_limits() {
+        let query: GetMessagesQuery = serde_json::from_str("{}").unwrap();
+        assert_eq!(query.cursor, None);
+        assert_eq!(query.limit, None);
+        let effective_limit = query.limit.unwrap_or(25).clamp(1, 100);
+        assert_eq!(effective_limit, 25);
+
+        let query: GetMessagesQuery = serde_json::from_str(r#"{"limit": 500}"#).unwrap();
+        let effective_limit = query.limit.unwrap_or(25).clamp(1, 100);
+        assert_eq!(effective_limit, 100);
+
+        let query: GetMessagesQuery = serde_json::from_str(r#"{"limit": 0}"#).unwrap();
+        let effective_limit = query.limit.unwrap_or(25).clamp(1, 100);
+        assert_eq!(effective_limit, 1);
+
+        let cursor_uuid = Uuid::now_v7();
+        let query: GetMessagesQuery = serde_json::from_str(&format!(r#"{{"cursor": "{}"}}"#, cursor_uuid)).unwrap();
+        assert_eq!(query.cursor, Some(cursor_uuid));
+
+        let query: GetMessagesQuery = serde_json::from_str(&format!(r#"{{"cursor_id": "{}"}}"#, cursor_uuid)).unwrap();
+        assert_eq!(query.cursor, Some(cursor_uuid));
+    }
 }

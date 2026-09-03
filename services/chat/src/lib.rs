@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use uuid::Uuid;
+use chrono::{DateTime, Utc};
 use database::PgPool;
 use errors::{AppError, Result};
 use models::{Conversation, Message, Group, MessageRead};
@@ -280,7 +281,7 @@ impl ChatRepository for ChatRepositoryImpl {
     async fn list_messages_paginated(&self, conversation_id: Uuid, cursor: Option<Uuid>, limit: i64) -> Result<Vec<Message>> {
         match cursor {
             None => {
-                sqlx::query_as::<_, Message>(
+                let mut messages = sqlx::query_as::<_, Message>(
                     r#"
                     SELECT id, conversation_id, sender_id, content, message_type, reply_to_id,
                            media_url, thumbnail_url, file_name, file_size, mime_type, duration,
@@ -295,27 +296,45 @@ impl ChatRepository for ChatRepositoryImpl {
                 .bind(limit)
                 .fetch_all(&self.pool)
                 .await
-                .map_err(AppError::Database)
+                .map_err(AppError::Database)?;
+
+                messages.reverse();
+                Ok(messages)
             }
             Some(cursor_id) => {
-                sqlx::query_as::<_, Message>(
+                let cursor_created_at = match sqlx::query_scalar::<_, DateTime<Utc>>(
+                    "SELECT created_at FROM messages WHERE id = $1"
+                )
+                .bind(cursor_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(AppError::Database)? {
+                    Some(dt) => dt,
+                    None => return Ok(Vec::new()),
+                };
+
+                let mut messages = sqlx::query_as::<_, Message>(
                     r#"
                     SELECT id, conversation_id, sender_id, content, message_type, reply_to_id,
                            media_url, thumbnail_url, file_name, file_size, mime_type, duration,
                            is_edited, created_at, updated_at
                     FROM messages
                     WHERE conversation_id = $1 
-                      AND created_at < (SELECT created_at FROM messages WHERE id = $2)
+                      AND (created_at < $2 OR (created_at = $2 AND id < $3))
                     ORDER BY created_at DESC
-                    LIMIT $3
+                    LIMIT $4
                     "#
                 )
                 .bind(conversation_id)
+                .bind(cursor_created_at)
                 .bind(cursor_id)
                 .bind(limit)
                 .fetch_all(&self.pool)
                 .await
-                .map_err(AppError::Database)
+                .map_err(AppError::Database)?;
+
+                messages.reverse();
+                Ok(messages)
             }
         }
     }
@@ -544,8 +563,8 @@ impl ChatService for ChatServiceImpl {
         for msg in &mut messages {
             if let Ok(raw_reactions) = self.repo.get_message_reactions(msg.id).await {
                 if !raw_reactions.is_empty() {
-                    use std::collections::HashMap;
-                    let mut groups: HashMap<String, (i64, Vec<Uuid>)> = HashMap::new();
+                    use std::collections::BTreeMap;
+                    let mut groups: BTreeMap<String, (i64, Vec<Uuid>)> = BTreeMap::new();
                     for r in raw_reactions {
                         let entry = groups.entry(r.reaction).or_insert((0, Vec::new()));
                         entry.0 += 1;
@@ -586,8 +605,8 @@ impl ChatService for ChatServiceImpl {
 
         if let Ok(raw_reactions) = self.repo.get_message_reactions(message.id).await {
             if !raw_reactions.is_empty() {
-                use std::collections::HashMap;
-                let mut groups: HashMap<String, (i64, Vec<Uuid>)> = HashMap::new();
+                use std::collections::BTreeMap;
+                let mut groups: BTreeMap<String, (i64, Vec<Uuid>)> = BTreeMap::new();
                 for r in raw_reactions {
                     let entry = groups.entry(r.reaction).or_insert((0, Vec::new()));
                     entry.0 += 1;

@@ -114,6 +114,8 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .route("/friends/requests", get(handlers::list_friend_requests_handler))
         .route("/friends/accept", post(handlers::accept_friend_handler))
         .route("/friends/reject", post(handlers::reject_friend_handler))
+        .route("/friends/remove", post(handlers::remove_friend_handler))
+        .route("/friends/:friend_id", delete(handlers::delete_friend_handler))
         .route("/search", get(handlers::search_users_handler))
         .route("/devices", post(handlers::register_device_handler))
         .route("/devices/unregister", post(handlers::unregister_device_handler))

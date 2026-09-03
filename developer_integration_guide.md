@@ -82,6 +82,58 @@ All REST endpoints are prefixed with `/api/v1` and assume JSON request and respo
   }
   ```
 
+#### **Accept Friend Request**
+* **Endpoint**: `POST /users/friends/accept`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "friendId": "019fa983-9f8c-7fc0-a285-fef0a8b88064"
+  }
+  ```
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Friend request accepted successfully"
+  }
+  ```
+
+#### **Reject Pending Friend Request**
+* **Endpoint**: `POST /users/friends/reject`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "friendId": "019fa983-9f8c-7fc0-a285-fef0a8b88064"
+  }
+  ```
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Friend request rejected successfully"
+  }
+  ```
+
+#### **Delete / Unfriend Friend**
+* **Endpoint Option 1 (REST DELETE)**: `DELETE /users/friends/:friend_id`
+* **Endpoint Option 2 (POST Remove)**: `POST /users/friends/remove`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model (for Option 2)**:
+  ```json
+  {
+    "friendId": "019fa983-9f8c-7fc0-a285-fef0a8b88064"
+  }
+  ```
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Friend removed successfully"
+  }
+  ```
+
 ---
 
 ### 💬 Chats & Private Messaging
@@ -106,22 +158,38 @@ All REST endpoints are prefixed with `/api/v1` and assume JSON request and respo
   }
   ```
 
-#### **Get Messages (with cursor pagination)**
-* **Endpoint**: `GET /chats/:conversation_id/messages`
+#### **Get Messages (with cursor-based pagination)**
+* **Endpoint**: `GET /api/v1/chats/:conversation_id/messages`
 * **Headers**: `Authorization: Bearer <access_token>`
 * **Query Parameters**:
-  * `cursor`: Message ID cursor for next page (optional)
-  * `limit`: Limit count per page (default: 20)
-* **Response Model** (200 OK):
+  * `cursor`: Message ID cursor for loading older messages (optional)
+  * `limit`: Number of messages per page (optional, default: 25, max: 100)
+* **Response Model** (200 OK, ordered chronologically ascending `created_at ASC`):
   ```json
   [
     {
       "id": "019fc863-0b31-7c43-bfb6-81f8133eacb4",
-      "conversationId": "019fc863-2500-7012-bcb9-dc61cef4c8e1",
-      "senderId": "019fb231-20c0-7cf1-84d5-dd053a261255",
+      "conversation_id": "019fc863-2500-7012-bcb9-dc61cef4c8e1",
+      "sender_id": "019fb231-20c0-7cf1-84d5-dd053a261255",
       "content": "Hello Jane, how are you?",
-      "replyToId": null,
-      "createdAt": "2026-08-09T12:01:00Z"
+      "message_type": "text",
+      "reply_to_id": null,
+      "media_url": null,
+      "thumbnail_url": null,
+      "file_name": null,
+      "file_size": null,
+      "mime_type": null,
+      "duration": null,
+      "is_edited": false,
+      "created_at": "2026-08-09T12:01:00Z",
+      "updated_at": "2026-08-09T12:01:00Z",
+      "reactions": [
+        {
+          "reaction": "👍",
+          "count": 1,
+          "users": ["019fb231-20c0-7cf1-84d5-dd053a261255"]
+        }
+      ]
     }
   ]
   ```

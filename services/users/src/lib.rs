@@ -32,6 +32,7 @@ pub trait UserService: Send + Sync {
     async fn send_friend_request(&self, user_id: Uuid, friend_username: &str) -> Result<Friendship>;
     async fn accept_friend_request(&self, user_id: Uuid, friend_id: Uuid) -> Result<()>;
     async fn reject_friend_request(&self, user_id: Uuid, friend_id: Uuid) -> Result<()>;
+    async fn delete_friend(&self, user_id: Uuid, friend_id: Uuid) -> Result<()>;
     async fn get_friends_list(&self, user_id: Uuid) -> Result<Vec<User>>;
     async fn get_pending_requests(&self, user_id: Uuid) -> Result<Vec<User>>;
 }
@@ -287,6 +288,13 @@ impl UserService for UserServiceImpl {
         if friendship.status != "pending" {
             return Err(AppError::Validation("Friend request is not pending".to_string()));
         }
+
+        self.repo.delete_friendship(user_id, friend_id).await
+    }
+
+    async fn delete_friend(&self, user_id: Uuid, friend_id: Uuid) -> Result<()> {
+        let _friendship = self.repo.find_friendship(user_id, friend_id).await?
+            .ok_or_else(|| AppError::NotFound("Friendship not found".to_string()))?;
 
         self.repo.delete_friendship(user_id, friend_id).await
     }

@@ -165,3 +165,59 @@ pub struct Notification {
     pub is_read: bool,
     pub created_at: DateTime<Utc>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_message_serialization_schema() {
+        let msg_id = Uuid::now_v7();
+        let conv_id = Uuid::now_v7();
+        let sender_id = Uuid::now_v7();
+        let now = Utc::now();
+
+        let msg = Message {
+            id: msg_id,
+            conversation_id: conv_id,
+            sender_id,
+            content: "Hello".to_string(),
+            message_type: "text".to_string(),
+            reply_to_id: None,
+            media_url: None,
+            thumbnail_url: None,
+            file_name: None,
+            file_size: None,
+            mime_type: None,
+            duration: None,
+            is_edited: false,
+            created_at: now,
+            updated_at: now,
+            reactions: None,
+        };
+
+        let json_val = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json_val["id"], msg_id.to_string());
+        assert_eq!(json_val["conversation_id"], conv_id.to_string());
+        assert_eq!(json_val["sender_id"], sender_id.to_string());
+        assert_eq!(json_val["content"], "Hello");
+        assert_eq!(json_val["message_type"], "text");
+        assert!(json_val["reactions"].is_null());
+
+        let mut msg_with_reactions = msg;
+        let u1 = Uuid::now_v7();
+        msg_with_reactions.reactions = Some(vec![
+            MessageReactionGroup {
+                reaction: "👍".to_string(),
+                count: 1,
+                users: vec![u1],
+            },
+        ]);
+
+        let json_val2 = serde_json::to_value(&msg_with_reactions).unwrap();
+        assert!(json_val2["reactions"].is_array());
+        assert_eq!(json_val2["reactions"][0]["reaction"], "👍");
+        assert_eq!(json_val2["reactions"][0]["count"], 1);
+        assert_eq!(json_val2["reactions"][0]["users"][0], u1.to_string());
+    }
+}
