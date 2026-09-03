@@ -123,6 +123,7 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
 
         .route("/notifications", get(handlers::list_notifications_handler))
         .route("/notifications/read", post(handlers::mark_notifications_read_handler))
+        .route("/notifications/:id/read", post(handlers::mark_notification_read_handler).patch(handlers::mark_notification_read_handler))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
     // 6. Build Chats router (protected by auth)

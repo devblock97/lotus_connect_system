@@ -25,6 +25,7 @@ pub trait NotificationService: Send + Sync {
     async fn unregister_device(&self, user_id: Uuid, token: &str) -> Result<()>;
     async fn get_notifications(&self, user_id: Uuid) -> Result<Vec<models::Notification>>;
     async fn mark_all_read(&self, user_id: Uuid) -> Result<()>;
+    async fn mark_read(&self, user_id: Uuid, notification_id: Uuid) -> Result<()>;
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -590,6 +591,23 @@ impl NotificationService for NotificationServiceImpl {
         .await
         .map(|_| ())
         .map_err(AppError::Database)
+    }
+
+    async fn mark_read(&self, user_id: Uuid, notification_id: Uuid) -> Result<()> {
+        let result = sqlx::query(
+            "UPDATE notifications SET is_read = TRUE WHERE id = $1 AND user_id = $2"
+        )
+        .bind(notification_id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await
+        .map_err(AppError::Database)?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound("Notification not found".to_string()));
+        }
+
+        Ok(())
     }
 }
 

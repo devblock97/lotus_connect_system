@@ -136,6 +136,85 @@ All REST endpoints are prefixed with `/api/v1` and assume JSON request and respo
 
 ---
 
+### 🔔 Notifications & Devices
+
+#### **Get Notifications List**
+* **Endpoint**: `GET /users/notifications`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  [
+    {
+      "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+      "user_id": "01a03314-af86-72f3-b270-d5642b05fbdc",
+      "title": "New message from John Nguyen",
+      "body": "Hello!",
+      "data": null,
+      "is_read": false,
+      "created_at": "2026-09-03T10:00:00Z"
+    }
+  ]
+  ```
+
+#### **Mark All Notifications as Read**
+* **Endpoint**: `POST /users/notifications/read`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Notifications marked as read"
+  }
+  ```
+
+#### **Mark a Specific Notification as Read**
+* **Endpoint**: `POST /users/notifications/:notification_id/read` *(or PATCH)*
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Notification marked as read"
+  }
+  ```
+
+#### **Register Device Token (Push Notifications)**
+* **Endpoint**: `POST /users/devices` *(alias: `/users/device-token`)*
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "token": "dUpAHTrbRfSwn_lEsvcYtI:APA91bGRt27bamAz02b-t_...",
+    "platform": "ios"
+  }
+  ```
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Device registered successfully"
+  }
+  ```
+
+#### **Unregister Device Token**
+* **Endpoint**: `POST /users/devices/unregister`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "token": "dUpAHTrbRfSwn_lEsvcYtI:APA91bGRt27bamAz02b-t_..."
+  }
+  ```
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Device unregistered successfully"
+  }
+  ```
+
+---
+
 ### 💬 Chats & Private Messaging
 
 #### **Create Private Chat Conversation**
