@@ -57,7 +57,12 @@ impl CallRepository for CallRepositoryImpl {
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<Call>> {
         sqlx::query_as::<_, Call>(
-            "SELECT id, host_id, conversation_id, channel_id, is_video, status, created_at, ended_at FROM calls WHERE id = $1"
+            r#"
+            SELECT c.id, c.host_id, COALESCE(u.full_name, u.username) AS host_name, u.username, c.conversation_id, c.channel_id, c.is_video, c.status, c.created_at, c.ended_at
+            FROM calls c
+            LEFT JOIN users u ON u.id = c.host_id
+            WHERE c.id = $1
+            "#
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -116,8 +121,9 @@ impl CallRepository for CallRepositoryImpl {
     async fn list_calls_for_user(&self, user_id: Uuid) -> Result<Vec<Call>> {
         sqlx::query_as::<_, Call>(
             r#"
-            SELECT DISTINCT c.id, c.host_id, c.conversation_id, c.channel_id, c.is_video, c.status, c.created_at, c.ended_at
+            SELECT DISTINCT c.id, c.host_id, COALESCE(u.full_name, u.username) AS host_name, u.username, c.conversation_id, c.channel_id, c.is_video, c.status, c.created_at, c.ended_at
             FROM calls c
+            LEFT JOIN users u ON u.id = c.host_id
             LEFT JOIN call_participants p ON p.call_id = c.id
             WHERE c.host_id = $1 OR p.user_id = $1
             ORDER BY c.created_at DESC

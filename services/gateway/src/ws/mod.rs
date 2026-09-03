@@ -177,7 +177,18 @@ async fn route_ws_event(
             let reply_to_id = payload.get("replyToId").and_then(|v| v.as_str())
                 .and_then(|id_str| Uuid::parse_str(id_str).ok());
 
-            let message = state.chat_service.send_message(sender_id, conversation_id, content, reply_to_id).await?;
+            let req = dto::SendMessageRequest {
+                content: Some(content.to_string()),
+                message_type: Some("text".to_string()),
+                reply_to_id,
+                media_url: None,
+                thumbnail_url: None,
+                file_name: None,
+                file_size: None,
+                mime_type: None,
+                duration: None,
+            };
+            let message = state.chat_service.send_message(sender_id, conversation_id, req).await?;
             let members = state.chat_service.get_conversation_members(conversation_id).await?;
 
             state.ws_manager.broadcast_to_users(&members, WsMessage {

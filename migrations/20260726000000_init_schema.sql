@@ -4,7 +4,7 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- USERS TABLE
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY,
     username VARCHAR(50) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
@@ -14,7 +14,7 @@ CREATE TABLE users (
 );
 
 -- REFRESH TOKENS TABLE
-CREATE TABLE refresh_tokens (
+CREATE TABLE IF NOT EXISTS refresh_tokens (
     id UUID PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token VARCHAR(512) UNIQUE NOT NULL,
@@ -24,7 +24,7 @@ CREATE TABLE refresh_tokens (
 );
 
 -- DEVICES TABLE (For push notifications)
-CREATE TABLE devices (
+CREATE TABLE IF NOT EXISTS devices (
     id UUID PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     token VARCHAR(512) NOT NULL,
@@ -34,7 +34,7 @@ CREATE TABLE devices (
 );
 
 -- FRIENDSHIPS TABLE
-CREATE TABLE friendships (
+CREATE TABLE IF NOT EXISTS friendships (
     id UUID PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     friend_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -44,7 +44,7 @@ CREATE TABLE friendships (
 );
 
 -- CONVERSATIONS TABLE (Can represent 1-to-1 or group chat channels)
-CREATE TABLE conversations (
+CREATE TABLE IF NOT EXISTS conversations (
     id UUID PRIMARY KEY,
     title VARCHAR(100), -- NULL for 1-to-1 chats
     is_group BOOLEAN NOT NULL DEFAULT FALSE,
@@ -52,7 +52,7 @@ CREATE TABLE conversations (
 );
 
 -- CONVERSATION MEMBERS TABLE
-CREATE TABLE conversation_members (
+CREATE TABLE IF NOT EXISTS conversation_members (
     conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role VARCHAR(20) NOT NULL DEFAULT 'member', -- 'member', 'admin'
@@ -61,7 +61,7 @@ CREATE TABLE conversation_members (
 );
 
 -- GROUPS TABLE (Extended metadata for group chats)
-CREATE TABLE groups (
+CREATE TABLE IF NOT EXISTS groups (
     id UUID PRIMARY KEY,
     conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL,
@@ -71,7 +71,7 @@ CREATE TABLE groups (
 );
 
 -- GROUP MEMBERS TABLE (Synchronized or overlapping with conversation members)
-CREATE TABLE group_members (
+CREATE TABLE IF NOT EXISTS group_members (
     group_id UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     role VARCHAR(20) NOT NULL DEFAULT 'member', -- 'member', 'admin', 'owner'
@@ -80,7 +80,7 @@ CREATE TABLE group_members (
 );
 
 -- MESSAGES TABLE
-CREATE TABLE messages (
+CREATE TABLE IF NOT EXISTS messages (
     id UUID PRIMARY KEY,
     conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     sender_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -93,7 +93,7 @@ CREATE TABLE messages (
 );
 
 -- MESSAGE READS TABLE (For read receipts / delivered status)
-CREATE TABLE message_reads (
+CREATE TABLE IF NOT EXISTS message_reads (
     message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -101,7 +101,7 @@ CREATE TABLE message_reads (
 );
 
 -- ATTACHMENTS TABLE
-CREATE TABLE attachments (
+CREATE TABLE IF NOT EXISTS attachments (
     id UUID PRIMARY KEY,
     message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     file_path VARCHAR(512) NOT NULL,
@@ -112,7 +112,7 @@ CREATE TABLE attachments (
 );
 
 -- CALLS TABLE (For WebRTC call sessions)
-CREATE TABLE calls (
+CREATE TABLE IF NOT EXISTS calls (
     id UUID PRIMARY KEY,
     host_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     conversation_id UUID REFERENCES conversations(id) ON DELETE SET NULL,
@@ -124,7 +124,7 @@ CREATE TABLE calls (
 );
 
 -- CALL PARTICIPANTS TABLE
-CREATE TABLE call_participants (
+CREATE TABLE IF NOT EXISTS call_participants (
     call_id UUID NOT NULL REFERENCES calls(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     joined_at TIMESTAMPTZ,
@@ -133,7 +133,7 @@ CREATE TABLE call_participants (
 );
 
 -- CALL EVENTS TABLE (Logs operations during call like mute, camera off)
-CREATE TABLE call_events (
+CREATE TABLE IF NOT EXISTS call_events (
     id UUID PRIMARY KEY,
     call_id UUID NOT NULL REFERENCES calls(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -142,7 +142,7 @@ CREATE TABLE call_events (
 );
 
 -- NOTIFICATIONS TABLE
-CREATE TABLE notifications (
+CREATE TABLE IF NOT EXISTS notifications (
     id UUID PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title VARCHAR(255) NOT NULL,
@@ -153,14 +153,14 @@ CREATE TABLE notifications (
 );
 
 -- USER PRESENCE TABLE
-CREATE TABLE user_presence (
+CREATE TABLE IF NOT EXISTS user_presence (
     user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     status VARCHAR(20) NOT NULL, -- 'online', 'offline', 'away', 'busy'
     last_seen TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Indexes for performance
-CREATE INDEX idx_messages_conversation ON messages(conversation_id);
-CREATE INDEX idx_messages_created_at ON messages(created_at DESC);
-CREATE INDEX idx_conversation_members_user ON conversation_members(user_id);
-CREATE INDEX idx_notifications_user_unread ON notifications(user_id) WHERE is_read = FALSE;
+CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_conversation_members_user ON conversation_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id) WHERE is_read = FALSE;

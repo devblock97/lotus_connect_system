@@ -46,6 +46,7 @@ pub struct Conversation {
     pub title: Option<String>,
     pub is_group: bool,
     pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -62,11 +63,19 @@ pub struct Message {
     pub conversation_id: Uuid,
     pub sender_id: Uuid,
     pub content: String,
-    pub message_type: String, // 'text', 'image', 'video', 'file', 'call_log'
+    pub message_type: String, // 'text', 'image', 'video', 'audio', 'voice', 'file', 'call_log'
     pub reply_to_id: Option<Uuid>,
+    pub media_url: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub file_name: Option<String>,
+    pub file_size: Option<i64>,
+    pub mime_type: Option<String>,
+    pub duration: Option<i32>,
     pub is_edited: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    #[sqlx(skip)]
+    pub reactions: Option<Vec<MessageReactionGroup>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -74,6 +83,22 @@ pub struct MessageRead {
     pub message_id: Uuid,
     pub user_id: Uuid,
     pub read_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct MessageReaction {
+    pub id: Uuid,
+    pub message_id: Uuid,
+    pub user_id: Uuid,
+    pub reaction: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageReactionGroup {
+    pub reaction: String,
+    pub count: i64,
+    pub users: Vec<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -101,6 +126,10 @@ pub struct Group {
 pub struct Call {
     pub id: Uuid,
     pub host_id: Uuid,
+    #[sqlx(default)]
+    pub host_name: Option<String>,
+    #[sqlx(default)]
+    pub username: Option<String>,
     pub conversation_id: Option<Uuid>,
     pub channel_id: String,
     pub is_video: bool,
@@ -135,4 +164,60 @@ pub struct Notification {
     pub data: Option<serde_json::Value>,
     pub is_read: bool,
     pub created_at: DateTime<Utc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_message_serialization_schema() {
+        let msg_id = Uuid::now_v7();
+        let conv_id = Uuid::now_v7();
+        let sender_id = Uuid::now_v7();
+        let now = Utc::now();
+
+        let msg = Message {
+            id: msg_id,
+            conversation_id: conv_id,
+            sender_id,
+            content: "Hello".to_string(),
+            message_type: "text".to_string(),
+            reply_to_id: None,
+            media_url: None,
+            thumbnail_url: None,
+            file_name: None,
+            file_size: None,
+            mime_type: None,
+            duration: None,
+            is_edited: false,
+            created_at: now,
+            updated_at: now,
+            reactions: None,
+        };
+
+        let json_val = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json_val["id"], msg_id.to_string());
+        assert_eq!(json_val["conversation_id"], conv_id.to_string());
+        assert_eq!(json_val["sender_id"], sender_id.to_string());
+        assert_eq!(json_val["content"], "Hello");
+        assert_eq!(json_val["message_type"], "text");
+        assert!(json_val["reactions"].is_null());
+
+        let mut msg_with_reactions = msg;
+        let u1 = Uuid::now_v7();
+        msg_with_reactions.reactions = Some(vec![
+            MessageReactionGroup {
+                reaction: "👍".to_string(),
+                count: 1,
+                users: vec![u1],
+            },
+        ]);
+
+        let json_val2 = serde_json::to_value(&msg_with_reactions).unwrap();
+        assert!(json_val2["reactions"].is_array());
+        assert_eq!(json_val2["reactions"][0]["reaction"], "👍");
+        assert_eq!(json_val2["reactions"][0]["count"], 1);
+        assert_eq!(json_val2["reactions"][0]["users"][0], u1.to_string());
+    }
 }

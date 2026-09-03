@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use axum::{
-    routing::{get, post, put},
+    routing::{get, post, put, delete},
     middleware as axum_middleware,
     Router,
     Extension,
@@ -114,6 +114,8 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .route("/friends/requests", get(handlers::list_friend_requests_handler))
         .route("/friends/accept", post(handlers::accept_friend_handler))
         .route("/friends/reject", post(handlers::reject_friend_handler))
+        .route("/friends/remove", post(handlers::remove_friend_handler))
+        .route("/friends/:friend_id", delete(handlers::delete_friend_handler))
         .route("/search", get(handlers::search_users_handler))
         .route("/devices", post(handlers::register_device_handler))
         .route("/devices/unregister", post(handlers::unregister_device_handler))
@@ -130,6 +132,8 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .route("/group", post(handlers::create_group_chat_handler))
         .route("/:conversation_id/messages", get(handlers::get_messages_handler).post(handlers::send_message_handler))
         .route("/messages/:message_id", put(handlers::edit_message_handler).delete(handlers::delete_message_handler))
+        .route("/messages/:message_id/reactions", get(handlers::get_reactions_handler).post(handlers::add_reaction_handler))
+        .route("/messages/:message_id/reactions/:reaction", delete(handlers::remove_reaction_handler))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
     // 7. Build Calls router (protected by auth)
@@ -153,6 +157,7 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
 
     // 10. Base App Router
     let app = Router::new()
+        .nest_service("/uploads", tower_http::services::ServeDir::new(&config.upload_dir))
         .nest("/api/v1", api_router)
         .route("/health", get(health_handler))
         .layer(cors)

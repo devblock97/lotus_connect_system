@@ -10,7 +10,8 @@ use auth::Claims;
 use dto::{
     RegisterRequest, LoginRequest, RefreshTokenRequest, 
     AuthResponse, UserResponse, TokenResponse, GenericResponse,
-    UserConversationResponse, SendMessageRequest, EditMessageRequest
+    UserConversationResponse, SendMessageRequest, EditMessageRequest,
+    AddReactionRequest, MessageReactionResponse
 };
 use crate::AppState;
 use crate::ws::types::WsMessage;
@@ -148,6 +149,36 @@ pub async fn reject_friend_handler(
     }))
 }
 
+#[derive(serde::Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteFriendRequest {
+    pub friend_id: Uuid,
+}
+
+pub async fn delete_friend_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(friend_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    state.user_service.delete_friend(claims.sub, friend_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Friend removed successfully".to_string(),
+    }))
+}
+
+pub async fn remove_friend_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(payload): Json<DeleteFriendRequest>,
+) -> Result<Json<GenericResponse>> {
+    state.user_service.delete_friend(claims.sub, payload.friend_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Friend removed successfully".to_string(),
+    }))
+}
+
 pub async fn list_friends_handler(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
@@ -245,6 +276,7 @@ pub async fn create_private_chat_handler(
         is_group: conv.is_group,
         peer_id: Some(payload.friend_id),
         created_at: conv.created_at,
+        updated_at: conv.updated_at,
     }))
 }
 
@@ -267,9 +299,9 @@ pub async fn create_group_chat_handler(
     Ok(Json(group))
 }
 
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, serde::Deserialize)]
 pub struct GetMessagesQuery {
+    #[serde(alias = "cursor_id", alias = "cursorId")]
     pub cursor: Option<Uuid>,
     pub limit: Option<i64>,
 }
@@ -305,6 +337,7 @@ pub async fn list_conversations_handler(
             is_group: conv.is_group,
             peer_id,
             created_at: conv.created_at,
+            updated_at: conv.updated_at,
         });
     }
     Ok(Json(responses))
@@ -318,7 +351,7 @@ pub async fn get_messages_handler(
     Path(conversation_id): Path<Uuid>,
     Query(query): Query<GetMessagesQuery>,
 ) -> Result<Json<Vec<models::Message>>> {
-    let limit = query.limit.unwrap_or(20);
+    let limit = query.limit.unwrap_or(25).clamp(1, 100);
     let messages = state.chat_service.get_messages(claims.sub, conversation_id, query.cursor, limit).await?;
     Ok(Json(messages))
 }
@@ -340,13 +373,30 @@ pub struct UploadResponse {
 pub async fn upload_file_handler(
     State(state): State<AppState>,
     Extension(_claims): Extension<Claims>,
+    headers: axum::http::HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<UploadResponse>> {
     if let Some(field) = multipart.next_field().await.map_err(|err| AppError::Validation(err.to_string()))? {
         let file_name = field.file_name().unwrap_or("file").to_string();
         let data = field.bytes().await.map_err(|err| AppError::Validation(err.to_string()))?.to_vec();
         
-        let file_url = state.storage_provider.upload_file(&file_name, data).await?;
+        let mut file_url = state.storage_provider.upload_file(&file_name, data).await?;
+        if !file_url.starts_with("http://") && !file_url.starts_with("https://") {
+            let base_name = std::path::Path::new(&file_url)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&file_name);
+            
+            let host = headers.get(axum::http::header::HOST)
+                .and_then(|val| val.to_str().ok())
+                .unwrap_or("localhost:8080");
+                
+            let proto = headers.get("x-forwarded-proto")
+                .and_then(|val| val.to_str().ok())
+                .unwrap_or("http");
+                
+            file_url = format!("{}://{}/uploads/{}", proto, host, base_name);
+        }
         return Ok(Json(UploadResponse { file_url }));
     }
     Err(AppError::Validation("No file provided".to_string()))
@@ -419,11 +469,11 @@ pub async fn send_message_handler(
 ) -> Result<Json<models::Message>> {
     payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
     
+    let content_text = payload.content.clone().unwrap_or_default();
     let message = state.chat_service.send_message(
         claims.sub,
         conversation_id,
-        &payload.content,
-        payload.reply_to_id,
+        payload,
     ).await?;
 
     // Broadcast to other connected WebSocket clients so they get it in real-time
@@ -442,7 +492,7 @@ pub async fn send_message_handler(
         if *member_id != claims.sub {
             if !state.ws_manager.is_viewing_conversation(*member_id, conversation_id).await {
                 let title = format!("New message from {}", sender_name);
-                let body = payload.content.clone();
+                let body = if !content_text.is_empty() { content_text.clone() } else { format!("[{}]", message.message_type) };
                 let payload_data = serde_json::json!({
                     "type": "chat",
                     "conversationId": conversation_id,
@@ -475,6 +525,81 @@ pub async fn send_message_handler(
     }
 
     Ok(Json(message))
+}
+
+pub async fn add_reaction_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(message_id): Path<Uuid>,
+    Json(payload): Json<AddReactionRequest>,
+) -> Result<Json<MessageReactionResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    
+    let reaction_model = state.chat_service.add_reaction(claims.sub, message_id, &payload.reaction).await?;
+    
+    if let Ok(msg) = state.chat_service.get_message_by_id(claims.sub, message_id).await {
+        if let Ok(members) = state.chat_service.get_conversation_members(msg.conversation_id).await {
+            state.ws_manager.broadcast_to_users(&members, WsMessage {
+                event: "chat:reaction_add".to_string(),
+                payload: serde_json::json!({
+                    "messageId": message_id,
+                    "conversationId": msg.conversation_id,
+                    "userId": claims.sub,
+                    "reaction": payload.reaction,
+                }),
+            }).await;
+        }
+    }
+
+    Ok(Json(MessageReactionResponse {
+        message_id: reaction_model.message_id,
+        user_id: reaction_model.user_id,
+        reaction: reaction_model.reaction,
+        created_at: reaction_model.created_at,
+    }))
+}
+
+pub async fn remove_reaction_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path((message_id, reaction)): Path<(Uuid, String)>,
+) -> Result<Json<GenericResponse>> {
+    state.chat_service.remove_reaction(claims.sub, message_id, &reaction).await?;
+    
+    if let Ok(msg) = state.chat_service.get_message_by_id(claims.sub, message_id).await {
+        if let Ok(members) = state.chat_service.get_conversation_members(msg.conversation_id).await {
+            state.ws_manager.broadcast_to_users(&members, WsMessage {
+                event: "chat:reaction_remove".to_string(),
+                payload: serde_json::json!({
+                    "messageId": message_id,
+                    "conversationId": msg.conversation_id,
+                    "userId": claims.sub,
+                    "reaction": reaction,
+                }),
+            }).await;
+        }
+    }
+
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Reaction removed".to_string(),
+    }))
+}
+
+pub async fn get_reactions_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(message_id): Path<Uuid>,
+) -> Result<Json<Vec<MessageReactionResponse>>> {
+    let reactions = state.chat_service.get_message_reactions(claims.sub, message_id).await?;
+    let response = reactions.into_iter().map(|r| MessageReactionResponse {
+        message_id: r.message_id,
+        user_id: r.user_id,
+        reaction: r.reaction,
+        created_at: r.created_at,
+    }).collect();
+
+    Ok(Json(response))
 }
 
 pub async fn edit_message_handler(
@@ -529,4 +654,33 @@ pub async fn delete_message_handler(
         success: true,
         message: "Message deleted successfully".to_string(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_messages_query_defaults_and_limits() {
+        let query: GetMessagesQuery = serde_json::from_str("{}").unwrap();
+        assert_eq!(query.cursor, None);
+        assert_eq!(query.limit, None);
+        let effective_limit = query.limit.unwrap_or(25).clamp(1, 100);
+        assert_eq!(effective_limit, 25);
+
+        let query: GetMessagesQuery = serde_json::from_str(r#"{"limit": 500}"#).unwrap();
+        let effective_limit = query.limit.unwrap_or(25).clamp(1, 100);
+        assert_eq!(effective_limit, 100);
+
+        let query: GetMessagesQuery = serde_json::from_str(r#"{"limit": 0}"#).unwrap();
+        let effective_limit = query.limit.unwrap_or(25).clamp(1, 100);
+        assert_eq!(effective_limit, 1);
+
+        let cursor_uuid = Uuid::now_v7();
+        let query: GetMessagesQuery = serde_json::from_str(&format!(r#"{{"cursor": "{}"}}"#, cursor_uuid)).unwrap();
+        assert_eq!(query.cursor, Some(cursor_uuid));
+
+        let query: GetMessagesQuery = serde_json::from_str(&format!(r#"{{"cursor_id": "{}"}}"#, cursor_uuid)).unwrap();
+        assert_eq!(query.cursor, Some(cursor_uuid));
+    }
 }

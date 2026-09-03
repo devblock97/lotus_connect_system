@@ -210,16 +210,9 @@ impl FcmTokenManager {
             .private_key
             .replace("\\n", "\n")
             .replace("\\r", "");
-        let pem_str = self
-            .service_account
-            .private_key
-            .replace("\\n", "\n")
-            .replace("\\r", "");
         let encoding_key = EncodingKey::from_rsa_pem(pem_str.as_bytes())
-            .map_err(|e| {
-                println!("FCM RSA PEM Error Details: {:?}", e);
-                AppError::Internal(format!("Invalid FCM RSA private key: {:?}", e))
-            })?;
+            .map_err(|e| AppError::Internal(format!("Invalid FCM RSA private key: {:?}", e)))?;
+
 
 
         let jwt = jsonwebtoken::encode(&Header::new(Algorithm::RS256), &claims, &encoding_key)
