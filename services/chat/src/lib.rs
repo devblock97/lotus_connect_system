@@ -33,6 +33,7 @@ pub trait ChatRepository: Send + Sync {
         file_size: Option<i64>,
         mime_type: Option<&str>,
         duration: Option<i32>,
+        media_items: Option<sqlx::types::Json<Vec<models::MediaItem>>>,
     ) -> Result<Message>;
     async fn find_message(&self, id: Uuid) -> Result<Option<Message>>;
     async fn update_message_content(&self, id: Uuid, content: &str) -> Result<Message>;
@@ -209,16 +210,18 @@ impl ChatRepository for ChatRepositoryImpl {
         file_size: Option<i64>,
         mime_type: Option<&str>,
         duration: Option<i32>,
+        media_items: Option<sqlx::types::Json<Vec<models::MediaItem>>>,
     ) -> Result<Message> {
         sqlx::query_as::<_, Message>(
             r#"
             INSERT INTO messages (
                 id, conversation_id, sender_id, content, message_type, reply_to_id,
-                media_url, thumbnail_url, file_name, file_size, mime_type, duration
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                media_url, thumbnail_url, file_name, file_size, mime_type, duration,
+                media_items
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             RETURNING id, conversation_id, sender_id, content, message_type, reply_to_id,
                       media_url, thumbnail_url, file_name, file_size, mime_type, duration,
-                      is_edited, created_at, updated_at
+                      media_items, is_edited, created_at, updated_at
             "#
         )
         .bind(id)
@@ -233,6 +236,7 @@ impl ChatRepository for ChatRepositoryImpl {
         .bind(file_size)
         .bind(mime_type)
         .bind(duration)
+        .bind(media_items)
         .fetch_one(&self.pool)
         .await
         .map_err(AppError::Database)
@@ -243,7 +247,7 @@ impl ChatRepository for ChatRepositoryImpl {
             r#"
             SELECT id, conversation_id, sender_id, content, message_type, reply_to_id,
                    media_url, thumbnail_url, file_name, file_size, mime_type, duration,
-                   is_edited, created_at, updated_at
+                   media_items, is_edited, created_at, updated_at
             FROM messages WHERE id = $1
             "#
         )
@@ -259,7 +263,7 @@ impl ChatRepository for ChatRepositoryImpl {
             UPDATE messages SET content = $2, is_edited = TRUE, updated_at = NOW() WHERE id = $1
             RETURNING id, conversation_id, sender_id, content, message_type, reply_to_id,
                       media_url, thumbnail_url, file_name, file_size, mime_type, duration,
-                      is_edited, created_at, updated_at
+                      media_items, is_edited, created_at, updated_at
             "#
         )
         .bind(id)
@@ -285,7 +289,7 @@ impl ChatRepository for ChatRepositoryImpl {
                     r#"
                     SELECT id, conversation_id, sender_id, content, message_type, reply_to_id,
                            media_url, thumbnail_url, file_name, file_size, mime_type, duration,
-                           is_edited, created_at, updated_at
+                           media_items, is_edited, created_at, updated_at
                     FROM messages
                     WHERE conversation_id = $1
                     ORDER BY created_at DESC
@@ -317,7 +321,7 @@ impl ChatRepository for ChatRepositoryImpl {
                     r#"
                     SELECT id, conversation_id, sender_id, content, message_type, reply_to_id,
                            media_url, thumbnail_url, file_name, file_size, mime_type, duration,
-                           is_edited, created_at, updated_at
+                           media_items, is_edited, created_at, updated_at
                     FROM messages
                     WHERE conversation_id = $1 
                       AND (created_at < $2 OR (created_at = $2 AND id < $3))
@@ -478,6 +482,51 @@ impl ChatService for ChatServiceImpl {
         let message_type = req.message_type.as_deref().unwrap_or("text");
         let content = req.content.as_deref().unwrap_or("");
 
+        let mut media_items = req.media_items.clone();
+        let mut media_url = req.media_url.clone();
+        let mut thumbnail_url = req.thumbnail_url.clone();
+        let mut file_name = req.file_name.clone();
+        let mut file_size = req.file_size;
+        let mut mime_type = req.mime_type.clone();
+        let mut duration = req.duration;
+
+        // Automatically synchronize media_items and single media_url
+        if let Some(ref items) = media_items {
+            if let Some(first) = items.first() {
+                if media_url.is_none() {
+                    media_url = Some(first.url.clone());
+                }
+                if thumbnail_url.is_none() {
+                    thumbnail_url = first.thumbnail_url.clone();
+                }
+                if file_name.is_none() {
+                    file_name = first.file_name.clone();
+                }
+                if file_size.is_none() {
+                    file_size = first.file_size;
+                }
+                if mime_type.is_none() {
+                    mime_type = first.mime_type.clone();
+                }
+                if duration.is_none() {
+                    duration = first.duration;
+                }
+            }
+        } else if let Some(ref url) = media_url {
+            media_items = Some(vec![models::MediaItem {
+                url: url.clone(),
+                thumbnail_url: thumbnail_url.clone(),
+                file_name: file_name.clone(),
+                file_size,
+                mime_type: mime_type.clone(),
+                duration,
+                width: None,
+                height: None,
+            }]);
+        }
+
+        let media_items_json = media_items.map(sqlx::types::Json);
+
         let message_id = Uuid::now_v7();
         let message = self.repo.create_message(
             message_id,
@@ -486,12 +535,13 @@ impl ChatService for ChatServiceImpl {
             content,
             message_type,
             req.reply_to_id,
-            req.media_url.as_deref(),
-            req.thumbnail_url.as_deref(),
-            req.file_name.as_deref(),
-            req.file_size,
-            req.mime_type.as_deref(),
-            req.duration,
+            media_url.as_deref(),
+            thumbnail_url.as_deref(),
+            file_name.as_deref(),
+            file_size,
+            mime_type.as_deref(),
+            duration,
+            media_items_json,
         ).await?;
 
         let _ = self.repo.touch_conversation(conversation_id).await;

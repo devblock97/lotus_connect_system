@@ -8,3 +8,4 @@ serde = { workspace = true }
 uuid = { workspace = true }
 validator = { workspace = true }
 chrono = { workspace = true }
+models = { workspace = true }

@@ -57,6 +57,19 @@ pub struct ConversationMember {
     pub joined_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaItem {
+    pub url: String,
+    pub thumbnail_url: Option<String>,
+    pub file_name: Option<String>,
+    pub file_size: Option<i64>,
+    pub mime_type: Option<String>,
+    pub duration: Option<i32>,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Message {
     pub id: Uuid,
@@ -71,6 +84,7 @@ pub struct Message {
     pub file_size: Option<i64>,
     pub mime_type: Option<String>,
     pub duration: Option<i32>,
+    pub media_items: Option<sqlx::types::Json<Vec<MediaItem>>>,
     pub is_edited: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -190,6 +204,7 @@ mod tests {
             file_size: None,
             mime_type: None,
             duration: None,
+            media_items: None,
             is_edited: false,
             created_at: now,
             updated_at: now,

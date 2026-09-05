@@ -250,15 +250,37 @@ All REST endpoints are prefixed with `/api/v1` and assume JSON request and respo
       "id": "019fc863-0b31-7c43-bfb6-81f8133eacb4",
       "conversation_id": "019fc863-2500-7012-bcb9-dc61cef4c8e1",
       "sender_id": "019fb231-20c0-7cf1-84d5-dd053a261255",
-      "content": "Hello Jane, how are you?",
-      "message_type": "text",
+      "content": "Vacation photos",
+      "message_type": "image",
       "reply_to_id": null,
-      "media_url": null,
-      "thumbnail_url": null,
-      "file_name": null,
-      "file_size": null,
-      "mime_type": null,
+      "media_url": "http://localhost:8080/uploads/img-1.jpg",
+      "thumbnail_url": "http://localhost:8080/uploads/img-1-thumb.jpg",
+      "file_name": "photo1.jpg",
+      "file_size": 1542000,
+      "mime_type": "image/jpeg",
       "duration": null,
+      "media_items": [
+        {
+          "url": "http://localhost:8080/uploads/img-1.jpg",
+          "thumbnailUrl": "http://localhost:8080/uploads/img-1-thumb.jpg",
+          "fileName": "photo1.jpg",
+          "fileSize": 1542000,
+          "mimeType": "image/jpeg",
+          "duration": null,
+          "width": 1080,
+          "height": 720
+        },
+        {
+          "url": "http://localhost:8080/uploads/img-2.jpg",
+          "thumbnailUrl": "http://localhost:8080/uploads/img-2-thumb.jpg",
+          "fileName": "photo2.jpg",
+          "fileSize": 1820000,
+          "mimeType": "image/jpeg",
+          "duration": null,
+          "width": 1080,
+          "height": 720
+        }
+      ],
       "is_edited": false,
       "created_at": "2026-08-09T12:01:00Z",
       "updated_at": "2026-08-09T12:01:00Z",
@@ -272,6 +294,39 @@ All REST endpoints are prefixed with `/api/v1` and assume JSON request and respo
     }
   ]
   ```
+
+#### **Send Message (Text, Voice, or Multi-Media)**
+* **Endpoint**: `POST /api/v1/chats/:conversation_id/messages`
+* **Headers**: `Authorization: Bearer <access_token>`, `Content-Type: application/json`
+* **Request Model (Multi-Image / Multi-Media)**:
+  ```json
+  {
+    "content": "Trip photos",
+    "messageType": "image",
+    "mediaItems": [
+      {
+        "url": "http://localhost:8080/uploads/img-1.jpg",
+        "thumbnailUrl": "http://localhost:8080/uploads/img-1-thumb.jpg",
+        "fileName": "photo1.jpg",
+        "fileSize": 1542000,
+        "mimeType": "image/jpeg",
+        "width": 1080,
+        "height": 720
+      },
+      {
+        "url": "http://localhost:8080/uploads/img-2.jpg",
+        "thumbnailUrl": "http://localhost:8080/uploads/img-2-thumb.jpg",
+        "fileName": "photo2.jpg",
+        "fileSize": 1820000,
+        "mimeType": "image/jpeg",
+        "width": 1080,
+        "height": 720
+      }
+    ]
+  }
+  ```
+* **Response Model** (200 OK): Same as message object with `media_items` populated.
+
 
 #### **Edit Message**
 * **Endpoint**: `PUT /chats/messages/:message_id`

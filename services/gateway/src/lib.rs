@@ -153,7 +153,8 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .nest("/users", user_routes)
         .nest("/chats", chat_routes)
         .nest("/calls", call_routes)
-        .nest("/uploads", upload_routes)
+        .nest("/uploads", upload_routes.clone())
+        .nest("/upload", upload_routes)
         .route("/ws", get(ws::ws_handler));
 
     // 10. Base App Router

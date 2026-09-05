@@ -28,7 +28,7 @@ serde_json = "1.0.120"
 validator = { version = "0.18.1", features = ["derive"] }
 
 # Database & Cache
-sqlx = { version = "0.8.0", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono"] }
+sqlx = { version = "0.8.0", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json"] }
 redis = { version = "0.25.4", features = ["tokio-comp", "connection-manager"] }
 
 # Security & Crypto

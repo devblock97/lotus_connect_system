@@ -187,6 +187,7 @@ async fn route_ws_event(
                 file_size: None,
                 mime_type: None,
                 duration: None,
+                media_items: None,
             };
             let message = state.chat_service.send_message(sender_id, conversation_id, req).await?;
             let members = state.chat_service.get_conversation_members(conversation_id).await?;

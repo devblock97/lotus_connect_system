@@ -93,6 +93,7 @@ pub struct SendMessageRequest {
     pub file_size: Option<i64>,
     pub mime_type: Option<String>,
     pub duration: Option<i32>,
+    pub media_items: Option<Vec<models::MediaItem>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
