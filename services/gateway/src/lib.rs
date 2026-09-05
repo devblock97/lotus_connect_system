@@ -2,6 +2,7 @@ use std::sync::Arc;
 use axum::{
     routing::{get, post, put, delete},
     middleware as axum_middleware,
+    extract::DefaultBodyLimit,
     Router,
     Extension,
 };
@@ -142,10 +143,11 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .route("/history", get(handlers::get_calls_history_handler))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
-    // 8. Build Uploads router (protected by auth)
+    // 8. Build Uploads router (protected by auth, with 250MB limit for video/mov files)
     let upload_routes = Router::new()
         .route("/", post(handlers::upload_file_handler))
         .route("/multiple", post(handlers::upload_multiple_files_handler))
+        .layer(DefaultBodyLimit::max(250 * 1024 * 1024))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
     // 9. Combine all routers under versioned api prefix

@@ -437,7 +437,21 @@ pub async fn upload_multiple_files_handler(
 
     while let Some(field) = multipart.next_field().await.map_err(|err| AppError::Validation(err.to_string()))? {
         let file_name = field.file_name().unwrap_or("file").to_string();
-        let mime_type = field.content_type().map(|s| s.to_string());
+        let mime_type = field.content_type().map(|s| s.to_string()).or_else(|| {
+            let ext = std::path::Path::new(&file_name).extension()?.to_str()?;
+            match ext.to_lowercase().as_str() {
+                "mov" => Some("video/quicktime".to_string()),
+                "mp4" => Some("video/mp4".to_string()),
+                "m4a" => Some("audio/m4a".to_string()),
+                "aac" => Some("audio/aac".to_string()),
+                "mp3" => Some("audio/mpeg".to_string()),
+                "jpg" | "jpeg" => Some("image/jpeg".to_string()),
+                "png" => Some("image/png".to_string()),
+                "gif" => Some("image/gif".to_string()),
+                "webp" => Some("image/webp".to_string()),
+                _ => None,
+            }
+        });
         let data = field.bytes().await.map_err(|err| AppError::Validation(err.to_string()))?.to_vec();
         let file_size = data.len() as i64;
         
