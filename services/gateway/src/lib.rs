@@ -145,6 +145,7 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
     // 8. Build Uploads router (protected by auth)
     let upload_routes = Router::new()
         .route("/", post(handlers::upload_file_handler))
+        .route("/multiple", post(handlers::upload_multiple_files_handler))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
     // 9. Combine all routers under versioned api prefix

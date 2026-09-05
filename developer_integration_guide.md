@@ -215,6 +215,49 @@ All REST endpoints are prefixed with `/api/v1` and assume JSON request and respo
 
 ---
 
+### 📁 Media & File Uploads
+
+#### **Upload Single File**
+* **Endpoint**: `POST /api/v1/uploads` (or `POST /api/v1/upload`)
+* **Headers**: `Authorization: Bearer <access_token>`, `Content-Type: multipart/form-data`
+* **Form-data**: `file: <binary>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "fileUrl": "http://localhost:8080/uploads/019fc877-c918-7241-94b2-298f26a57008-recording.m4a"
+  }
+  ```
+
+#### **Upload Multiple Files (Batch)**
+* **Endpoint**: `POST /api/v1/uploads/multiple` (or `POST /api/v1/upload/multiple`)
+* **Headers**: `Authorization: Bearer <access_token>`, `Content-Type: multipart/form-data`
+* **Form-data**: Multiple file fields (`files`, `files[]`, or `file1`, `file2`)
+* **Response Model** (200 OK):
+  ```json
+  {
+    "files": [
+      {
+        "url": "http://localhost:8080/uploads/01a070af-cb79-7cc2-8395-4e64faddceea-photo1.jpg",
+        "fileName": "photo1.jpg",
+        "fileSize": 1542000,
+        "mimeType": "image/jpeg"
+      },
+      {
+        "url": "http://localhost:8080/uploads/01a070af-cb79-7cc2-8395-4e7054870ba4-photo2.jpg",
+        "fileName": "photo2.jpg",
+        "fileSize": 1820000,
+        "mimeType": "image/jpeg"
+      }
+    ],
+    "fileUrls": [
+      "http://localhost:8080/uploads/01a070af-cb79-7cc2-8395-4e64faddceea-photo1.jpg",
+      "http://localhost:8080/uploads/01a070af-cb79-7cc2-8395-4e7054870ba4-photo2.jpg"
+    ]
+  }
+  ```
+
+---
+
 ### 💬 Chats & Private Messaging
 
 #### **Create Private Chat Conversation**

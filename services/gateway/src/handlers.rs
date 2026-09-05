@@ -370,6 +370,22 @@ pub struct UploadResponse {
     pub file_url: String,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadedFileItem {
+    pub url: String,
+    pub file_name: String,
+    pub file_size: i64,
+    pub mime_type: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultipleUploadResponse {
+    pub files: Vec<UploadedFileItem>,
+    pub file_urls: Vec<String>,
+}
+
 pub async fn upload_file_handler(
     State(state): State<AppState>,
     Extension(_claims): Extension<Claims>,
@@ -400,6 +416,55 @@ pub async fn upload_file_handler(
         return Ok(Json(UploadResponse { file_url }));
     }
     Err(AppError::Validation("No file provided".to_string()))
+}
+
+pub async fn upload_multiple_files_handler(
+    State(state): State<AppState>,
+    Extension(_claims): Extension<Claims>,
+    headers: axum::http::HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Json<MultipleUploadResponse>> {
+    let mut files = Vec::new();
+    let mut file_urls = Vec::new();
+
+    let host = headers.get(axum::http::header::HOST)
+        .and_then(|val| val.to_str().ok())
+        .unwrap_or("localhost:8080");
+        
+    let proto = headers.get("x-forwarded-proto")
+        .and_then(|val| val.to_str().ok())
+        .unwrap_or("http");
+
+    while let Some(field) = multipart.next_field().await.map_err(|err| AppError::Validation(err.to_string()))? {
+        let file_name = field.file_name().unwrap_or("file").to_string();
+        let mime_type = field.content_type().map(|s| s.to_string());
+        let data = field.bytes().await.map_err(|err| AppError::Validation(err.to_string()))?.to_vec();
+        let file_size = data.len() as i64;
+        
+        let mut file_url = state.storage_provider.upload_file(&file_name, data).await?;
+        if !file_url.starts_with("http://") && !file_url.starts_with("https://") {
+            let base_name = std::path::Path::new(&file_url)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&file_name);
+                
+            file_url = format!("{}://{}/uploads/{}", proto, host, base_name);
+        }
+
+        file_urls.push(file_url.clone());
+        files.push(UploadedFileItem {
+            url: file_url,
+            file_name,
+            file_size,
+            mime_type,
+        });
+    }
+
+    if files.is_empty() {
+        return Err(AppError::Validation("No files provided".to_string()));
+    }
+
+    Ok(Json(MultipleUploadResponse { files, file_urls }))
 }
 
 #[derive(serde::Deserialize, Validate)]
