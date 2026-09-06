@@ -61,9 +61,13 @@ pub struct ConversationMember {
 #[serde(rename_all = "camelCase")]
 pub struct MediaItem {
     pub url: String,
+    #[serde(alias = "thumbnail_url")]
     pub thumbnail_url: Option<String>,
+    #[serde(alias = "file_name")]
     pub file_name: Option<String>,
+    #[serde(alias = "file_size")]
     pub file_size: Option<i64>,
+    #[serde(alias = "mime_type")]
     pub mime_type: Option<String>,
     pub duration: Option<i32>,
     pub width: Option<i32>,

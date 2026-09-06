@@ -374,6 +374,7 @@ pub struct UploadResponse {
 #[serde(rename_all = "camelCase")]
 pub struct UploadedFileItem {
     pub url: String,
+    pub thumbnail_url: Option<String>,
     pub file_name: String,
     pub file_size: i64,
     pub mime_type: Option<String>,
@@ -468,6 +469,7 @@ pub async fn upload_multiple_files_handler(
         file_urls.push(file_url.clone());
         files.push(UploadedFileItem {
             url: file_url,
+            thumbnail_url: None,
             file_name,
             file_size,
             mime_type,

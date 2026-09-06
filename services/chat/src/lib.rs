@@ -479,9 +479,7 @@ impl ChatService for ChatServiceImpl {
             return Err(AppError::Authorization("User is not a member of this conversation".to_string()));
         }
 
-        let message_type = req.message_type.as_deref().unwrap_or("text");
         let content = req.content.as_deref().unwrap_or("");
-
         let mut media_items = req.media_items.clone();
         let mut media_url = req.media_url.clone();
         let mut thumbnail_url = req.thumbnail_url.clone();
@@ -524,6 +522,25 @@ impl ChatService for ChatServiceImpl {
                 height: None,
             }]);
         }
+
+        let message_type = match req.message_type.as_deref() {
+            Some(t) if !t.is_empty() && t != "text" => t,
+            _ => {
+                if let Some(ref items) = media_items {
+                    if items.iter().any(|m| m.mime_type.as_deref().map(|s| s.contains("video")).unwrap_or(false)) {
+                        "video"
+                    } else if !items.is_empty() {
+                        "image"
+                    } else {
+                        "text"
+                    }
+                } else if media_url.is_some() {
+                    "image"
+                } else {
+                    "text"
+                }
+            }
+        };
 
         let media_items_json = media_items.map(sqlx::types::Json);
 
