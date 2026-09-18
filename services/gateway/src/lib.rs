@@ -111,6 +111,9 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
 
     // 5. Build Users router (protected by auth)
     let user_routes = Router::new()
+        .route("/me", get(handlers::get_me_handler))
+        .route("/avatar", post(handlers::upload_avatar_handler).put(handlers::update_avatar_url_handler).patch(handlers::update_avatar_url_handler))
+        .route("/me/avatar", post(handlers::upload_avatar_handler).put(handlers::update_avatar_url_handler).patch(handlers::update_avatar_url_handler))
         .route("/friends", post(handlers::add_friend_handler).get(handlers::list_friends_handler))
         .route("/friends/requests", get(handlers::list_friend_requests_handler))
         .route("/friends/accept", post(handlers::accept_friend_handler))
@@ -125,6 +128,7 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .route("/notifications", get(handlers::list_notifications_handler))
         .route("/notifications/read", post(handlers::mark_notifications_read_handler))
         .route("/notifications/:id/read", post(handlers::mark_notification_read_handler).patch(handlers::mark_notification_read_handler))
+        .layer(DefaultBodyLimit::max(20 * 1024 * 1024))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
     // 6. Build Chats router (protected by auth)
@@ -147,6 +151,7 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
     let upload_routes = Router::new()
         .route("/", post(handlers::upload_file_handler))
         .route("/multiple", post(handlers::upload_multiple_files_handler))
+        .route("/avatar", post(handlers::upload_avatar_handler))
         .layer(DefaultBodyLimit::max(250 * 1024 * 1024))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 

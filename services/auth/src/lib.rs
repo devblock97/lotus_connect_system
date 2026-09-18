@@ -112,6 +112,7 @@ impl AuthService for AuthServiceImpl {
             username: user.username,
             full_name: user.full_name,
             email: user.email,
+            avatar_url: user.avatar_url,
             friendship_status: None,
             friendship_sender_id: None,
         })
@@ -169,6 +170,7 @@ impl AuthService for AuthServiceImpl {
                 username: user.username,
                 full_name: user.full_name,
                 email: user.email,
+                avatar_url: user.avatar_url,
                 friendship_status: None,
                 friendship_sender_id: None,
             },

@@ -10,6 +10,7 @@ pub trait UserRepository: Send + Sync {
     async fn find_by_id(&self, id: Uuid) -> Result<Option<User>>;
     async fn find_by_email(&self, email: &str) -> Result<Option<User>>;
     async fn find_by_username(&self, username: &str) -> Result<Option<User>>;
+    async fn update_avatar(&self, user_id: Uuid, avatar_url: &str) -> Result<User>;
     async fn search(&self, query: &str, current_user_id: Uuid) -> Result<Vec<(User, Option<String>, Option<Uuid>)>>;
     
     // Friendship management
@@ -27,6 +28,7 @@ pub trait UserService: Send + Sync {
     async fn get_user_by_id(&self, id: Uuid) -> Result<User>;
     async fn get_user_by_email(&self, email: &str) -> Result<User>;
     async fn get_user_by_username(&self, username: &str) -> Result<User>;
+    async fn update_avatar(&self, user_id: Uuid, avatar_url: &str) -> Result<User>;
     async fn search_users(&self, query: &str, current_user_id: Uuid) -> Result<Vec<(User, Option<String>, Option<Uuid>)>>;
     
     async fn send_friend_request(&self, user_id: Uuid, friend_username: &str) -> Result<Friendship>;
@@ -51,7 +53,7 @@ impl UserRepositoryImpl {
 impl UserRepository for UserRepositoryImpl {
     async fn create(&self, id: Uuid, username: &str, full_name: Option<&str>, email: &str, password_hash: &str) -> Result<User> {
         sqlx::query_as::<_, User>(
-            "INSERT INTO users (id, username, full_name, email, password_hash) VALUES ($1, $2, $3, $4, $5) RETURNING id, username, full_name, email, password_hash, created_at, updated_at"
+            "INSERT INTO users (id, username, full_name, email, password_hash) VALUES ($1, $2, $3, $4, $5) RETURNING id, username, full_name, email, password_hash, avatar_url, created_at, updated_at"
         )
         .bind(id)
         .bind(username)
@@ -65,7 +67,7 @@ impl UserRepository for UserRepositoryImpl {
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<User>> {
         sqlx::query_as::<_, User>(
-            "SELECT id, username, full_name, email, password_hash, created_at, updated_at FROM users WHERE id = $1"
+            "SELECT id, username, full_name, email, password_hash, avatar_url, created_at, updated_at FROM users WHERE id = $1"
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -75,7 +77,7 @@ impl UserRepository for UserRepositoryImpl {
 
     async fn find_by_email(&self, email: &str) -> Result<Option<User>> {
         sqlx::query_as::<_, User>(
-            "SELECT id, username, full_name, email, password_hash, created_at, updated_at FROM users WHERE email = $1"
+            "SELECT id, username, full_name, email, password_hash, avatar_url, created_at, updated_at FROM users WHERE email = $1"
         )
         .bind(email)
         .fetch_optional(&self.pool)
@@ -85,10 +87,21 @@ impl UserRepository for UserRepositoryImpl {
 
     async fn find_by_username(&self, username: &str) -> Result<Option<User>> {
         sqlx::query_as::<_, User>(
-            "SELECT id, username, full_name, email, password_hash, created_at, updated_at FROM users WHERE username = $1"
+            "SELECT id, username, full_name, email, password_hash, avatar_url, created_at, updated_at FROM users WHERE username = $1"
         )
         .bind(username)
         .fetch_optional(&self.pool)
+        .await
+        .map_err(AppError::Database)
+    }
+
+    async fn update_avatar(&self, user_id: Uuid, avatar_url: &str) -> Result<User> {
+        sqlx::query_as::<_, User>(
+            "UPDATE users SET avatar_url = $2, updated_at = NOW() WHERE id = $1 RETURNING id, username, full_name, email, password_hash, avatar_url, created_at, updated_at"
+        )
+        .bind(user_id)
+        .bind(avatar_url)
+        .fetch_one(&self.pool)
         .await
         .map_err(AppError::Database)
     }
@@ -103,6 +116,7 @@ impl UserRepository for UserRepositoryImpl {
                 u.full_name, 
                 u.email, 
                 u.password_hash, 
+                u.avatar_url,
                 u.created_at, 
                 u.updated_at,
                 f.status AS "friendship_status?",
@@ -130,6 +144,7 @@ impl UserRepository for UserRepositoryImpl {
                     full_name: row.full_name,
                     email: row.email,
                     password_hash: row.password_hash,
+                    avatar_url: row.avatar_url,
                     created_at: row.created_at,
                     updated_at: row.updated_at,
                 };
@@ -192,7 +207,7 @@ impl UserRepository for UserRepositoryImpl {
     async fn list_friends(&self, user_id: Uuid) -> Result<Vec<User>> {
         sqlx::query_as::<_, User>(
             r#"
-            SELECT u.id, u.username, u.full_name, u.email, u.password_hash, u.created_at, u.updated_at 
+            SELECT u.id, u.username, u.full_name, u.email, u.password_hash, u.avatar_url, u.created_at, u.updated_at 
             FROM users u
             JOIN friendships f ON (f.user_id = u.id OR f.friend_id = u.id)
             WHERE (f.user_id = $1 OR f.friend_id = $1) AND f.status = 'accepted' AND u.id != $1
@@ -207,7 +222,7 @@ impl UserRepository for UserRepositoryImpl {
     async fn list_pending_requests(&self, user_id: Uuid) -> Result<Vec<User>> {
         sqlx::query_as::<_, User>(
             r#"
-            SELECT u.id, u.username, u.full_name, u.email, u.password_hash, u.created_at, u.updated_at 
+            SELECT u.id, u.username, u.full_name, u.email, u.password_hash, u.avatar_url, u.created_at, u.updated_at 
             FROM users u
             JOIN friendships f ON f.user_id = u.id
             WHERE f.friend_id = $1 AND f.status = 'pending'
@@ -254,6 +269,10 @@ impl UserService for UserServiceImpl {
 
     async fn get_user_by_username(&self, username: &str) -> Result<User> {
         self.repo.find_by_username(username).await?.ok_or_else(|| AppError::NotFound("User not found".to_string()))
+    }
+
+    async fn update_avatar(&self, user_id: Uuid, avatar_url: &str) -> Result<User> {
+        self.repo.update_avatar(user_id, avatar_url).await
     }
 
     async fn send_friend_request(&self, user_id: Uuid, friend_username: &str) -> Result<Friendship> {
