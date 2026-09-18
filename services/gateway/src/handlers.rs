@@ -11,7 +11,8 @@ use dto::{
     RegisterRequest, LoginRequest, RefreshTokenRequest, 
     AuthResponse, UserResponse, TokenResponse, GenericResponse,
     UserConversationResponse, SendMessageRequest, EditMessageRequest,
-    AddReactionRequest, MessageReactionResponse
+    AddReactionRequest, MessageReactionResponse,
+    UpdateAvatarRequest, AvatarUploadResponse
 };
 use crate::AppState;
 use crate::ws::types::WsMessage;
@@ -179,6 +180,122 @@ pub async fn remove_friend_handler(
     }))
 }
 
+pub async fn get_me_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<UserResponse>> {
+    let user = state.user_service.get_user_by_id(claims.sub).await?;
+    Ok(Json(UserResponse {
+        id: user.id,
+        username: user.username,
+        full_name: user.full_name,
+        email: user.email,
+        avatar_url: user.avatar_url,
+        friendship_status: None,
+        friendship_sender_id: None,
+    }))
+}
+
+pub async fn upload_avatar_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    headers: axum::http::HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Json<AvatarUploadResponse>> {
+    while let Some(field) = multipart.next_field().await.map_err(|err| AppError::Validation(err.to_string()))? {
+        let file_name = field.file_name().unwrap_or("avatar.jpg").to_string();
+
+        let ext = std::path::Path::new(&file_name)
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        let content_type = field.content_type().unwrap_or("").to_string();
+
+        let is_image = match ext.as_str() {
+            "jpg" | "jpeg" | "png" | "webp" | "gif" => true,
+            _ => content_type.starts_with("image/"),
+        };
+
+        if !is_image {
+            return Err(AppError::Validation("Only image files (jpg, jpeg, png, webp, gif) are supported for avatars".to_string()));
+        }
+
+        let data = field.bytes().await.map_err(|err| AppError::Validation(err.to_string()))?.to_vec();
+        
+        if data.is_empty() {
+            return Err(AppError::Validation("Avatar file cannot be empty".to_string()));
+        }
+        if data.len() > 10 * 1024 * 1024 {
+            return Err(AppError::Validation("Avatar image size exceeds the maximum allowed limit of 10MB".to_string()));
+        }
+
+        let mut file_url = state.storage_provider.upload_file(&file_name, data).await?;
+        if !file_url.starts_with("http://") && !file_url.starts_with("https://") {
+            let base_name = std::path::Path::new(&file_url)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&file_name);
+            
+            let host = headers.get(axum::http::header::HOST)
+                .and_then(|val| val.to_str().ok())
+                .unwrap_or("localhost:8080");
+                
+            let proto = headers.get("x-forwarded-proto")
+                .and_then(|val| val.to_str().ok())
+                .unwrap_or("http");
+                
+            file_url = format!("{}://{}/uploads/{}", proto, host, base_name);
+        }
+
+        let updated_user = state.user_service.update_avatar(claims.sub, &file_url).await?;
+
+        let user_response = UserResponse {
+            id: updated_user.id,
+            username: updated_user.username,
+            full_name: updated_user.full_name,
+            email: updated_user.email,
+            avatar_url: updated_user.avatar_url,
+            friendship_status: None,
+            friendship_sender_id: None,
+        };
+
+        return Ok(Json(AvatarUploadResponse {
+            avatar_url: file_url.clone(),
+            file_url,
+            user: user_response,
+        }));
+    }
+
+    Err(AppError::Validation("No avatar file provided in multipart form data".to_string()))
+}
+
+pub async fn update_avatar_url_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(payload): Json<UpdateAvatarRequest>,
+) -> Result<Json<AvatarUploadResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let updated_user = state.user_service.update_avatar(claims.sub, &payload.avatar_url).await?;
+
+    let user_response = UserResponse {
+        id: updated_user.id,
+        username: updated_user.username,
+        full_name: updated_user.full_name,
+        email: updated_user.email,
+        avatar_url: updated_user.avatar_url,
+        friendship_status: None,
+        friendship_sender_id: None,
+    };
+
+    Ok(Json(AvatarUploadResponse {
+        avatar_url: payload.avatar_url.clone(),
+        file_url: payload.avatar_url,
+        user: user_response,
+    }))
+}
+
 pub async fn list_friends_handler(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
@@ -191,6 +308,7 @@ pub async fn list_friends_handler(
             username: u.username,
             full_name: u.full_name,
             email: u.email,
+            avatar_url: u.avatar_url,
             friendship_status: Some("accepted".to_string()),
             friendship_sender_id: None,
         })
@@ -210,6 +328,7 @@ pub async fn list_friend_requests_handler(
             username: u.username,
             full_name: u.full_name,
             email: u.email,
+            avatar_url: u.avatar_url,
             friendship_status: Some("pending".to_string()),
             friendship_sender_id: Some(u.id),
         })
@@ -238,6 +357,7 @@ pub async fn search_users_handler(
             username: u.username,
             full_name: u.full_name,
             email: u.email,
+            avatar_url: u.avatar_url,
             friendship_status: status,
             friendship_sender_id: sender_id,
         })

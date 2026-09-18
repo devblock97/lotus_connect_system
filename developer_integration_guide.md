@@ -30,7 +30,8 @@ All REST endpoints are prefixed with `/api/v1` and assume JSON request and respo
       "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
       "username": "johndoe",
       "email": "john@example.com",
-      "fullName": "John Doe"
+      "fullName": "John Doe",
+      "avatarUrl": "http://localhost:8080/uploads/019fc877-c918-7241-94b2-298f26a57008-avatar.jpg"
     }
   }
   ```
@@ -60,7 +61,8 @@ All REST endpoints are prefixed with `/api/v1` and assume JSON request and respo
       "id": "019fa983-9f8c-7fc0-a285-fef0a8b88064",
       "username": "janedoe",
       "email": "jane@example.com",
-      "fullName": "Jane Doe"
+      "fullName": "Jane Doe",
+      "avatarUrl": "http://localhost:8080/uploads/019fa983-avatar.jpg"
     }
   ]
   ```
@@ -212,6 +214,58 @@ All REST endpoints are prefixed with `/api/v1` and assume JSON request and respo
     "message": "Device unregistered successfully"
   }
   ```
+
+---
+
+### 👤 User Profile & Avatar
+
+#### **Get Current User Profile**
+* **Endpoint**: `GET /users/me`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+    "username": "johndoe",
+    "fullName": "John Doe",
+    "email": "john@example.com",
+    "avatarUrl": "http://localhost:8080/uploads/019fc877-c918-7241-94b2-298f26a57008-avatar.jpg",
+    "friendshipStatus": null,
+    "friendshipSenderId": null
+  }
+  ```
+
+#### **Upload Avatar (Multipart)**
+Uploads an image file for the current user's profile avatar. Supported formats include `jpg`, `jpeg`, `png`, `webp`, and `gif` (max 10MB).
+* **Endpoint**: `POST /users/avatar` *(aliases: `POST /users/me/avatar`, `POST /upload/avatar`, `POST /uploads/avatar`)*
+* **Headers**: `Authorization: Bearer <access_token>`, `Content-Type: multipart/form-data`
+* **Form-data**: `avatar: <binary>` or `file: <binary>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "avatarUrl": "http://localhost:8080/uploads/019fc877-c918-7241-94b2-298f26a57008-avatar.jpg",
+    "fileUrl": "http://localhost:8080/uploads/019fc877-c918-7241-94b2-298f26a57008-avatar.jpg",
+    "user": {
+      "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+      "username": "johndoe",
+      "fullName": "John Doe",
+      "email": "john@example.com",
+      "avatarUrl": "http://localhost:8080/uploads/019fc877-c918-7241-94b2-298f26a57008-avatar.jpg"
+    }
+  }
+  ```
+
+#### **Update Avatar URL (JSON)**
+Sets or updates the current user's avatar URL using an already-uploaded file URL.
+* **Endpoint**: `PUT /users/avatar` *(or `PATCH /users/avatar`, aliases: `/users/me/avatar`)*
+* **Headers**: `Authorization: Bearer <access_token>`, `Content-Type: application/json`
+* **Request Model**:
+  ```json
+  {
+    "avatarUrl": "http://localhost:8080/uploads/019fc877-c918-7241-94b2-298f26a57008-avatar.jpg"
+  }
+  ```
+* **Response Model** (200 OK): Same as Upload Avatar response.
 
 ---
 

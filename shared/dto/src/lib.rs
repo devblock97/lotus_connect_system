@@ -38,8 +38,24 @@ pub struct UserResponse {
     pub username: String,
     pub full_name: Option<String>,
     pub email: String,
+    pub avatar_url: Option<String>,
     pub friendship_status: Option<String>,
     pub friendship_sender_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAvatarRequest {
+    #[validate(length(min = 1, message = "Avatar URL must not be empty"))]
+    pub avatar_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvatarUploadResponse {
+    pub avatar_url: String,
+    pub file_url: String,
+    pub user: UserResponse,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
