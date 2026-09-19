@@ -30,6 +30,8 @@ service-presence = { path = "../presence" }
 service-signaling = { path = "../signaling" }
 service-call = { path = "../call" }
 service-notification = { path = "../notification" }
+service-feed = { path = "../feed" }
 chrono = { workspace = true }
 service-upload = { path = "../upload" }
 redis = { workspace = true }
+

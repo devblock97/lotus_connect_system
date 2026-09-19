@@ -32,6 +32,7 @@ pub struct AppState {
     pub call_service: Arc<dyn service_call::CallService>,
     pub storage_provider: Arc<dyn service_upload::StorageProvider>,
     pub notification_service: Arc<dyn service_notification::NotificationService>,
+    pub feed_service: Arc<dyn service_feed::FeedService>,
     pub ws_manager: ws::manager::WsManager,
 }
 
@@ -62,6 +63,9 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
     let call_repo = Arc::new(service_call::CallRepositoryImpl::new(pool.clone()));
     let call_service = Arc::new(service_call::CallServiceImpl::new(call_repo));
 
+    let feed_repo = Arc::new(service_feed::FeedRepositoryImpl::new(pool.clone()));
+    let feed_service = Arc::new(service_feed::FeedServiceImpl::new(feed_repo));
+
     let storage_provider = service_upload::create_storage_provider(&config);
 
     let notification_provider: Arc<dyn service_notification::NotificationProvider> =
@@ -91,6 +95,7 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         presence_service,
         chat_service,
         call_service,
+        feed_service,
         storage_provider,
         notification_service,
         ws_manager,
@@ -128,6 +133,7 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .route("/notifications", get(handlers::list_notifications_handler))
         .route("/notifications/read", post(handlers::mark_notifications_read_handler))
         .route("/notifications/:id/read", post(handlers::mark_notification_read_handler).patch(handlers::mark_notification_read_handler))
+        .route("/:user_id/posts", get(handlers::get_user_posts_handler))
         .layer(DefaultBodyLimit::max(20 * 1024 * 1024))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
@@ -155,7 +161,21 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .layer(DefaultBodyLimit::max(250 * 1024 * 1024))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
-    // 9. Combine all routers under versioned api prefix
+    // 9. Build Posts & Feed routers (protected by auth)
+    let post_routes = Router::new()
+        .route("/", post(handlers::create_post_handler))
+        .route("/:post_id", get(handlers::get_post_handler).put(handlers::update_post_handler).patch(handlers::update_post_handler).delete(handlers::delete_post_handler))
+        .route("/:post_id/reactions", get(handlers::get_post_reactions_handler).post(handlers::add_post_reaction_handler).delete(handlers::remove_post_reaction_handler))
+        .route("/:post_id/comments", get(handlers::get_post_comments_handler).post(handlers::create_comment_handler))
+        .route("/:post_id/comments/:comment_id", delete(handlers::delete_comment_handler))
+        .layer(axum_middleware::from_fn(self::middleware::require_auth));
+
+    let feed_routes = Router::new()
+        .route("/", get(handlers::get_home_feed_handler))
+        .route("/explore", get(handlers::get_explore_feed_handler))
+        .layer(axum_middleware::from_fn(self::middleware::require_auth));
+
+    // 10. Combine all routers under versioned api prefix
     let api_router = Router::new()
         .nest("/auth", auth_routes)
         .nest("/users", user_routes)
@@ -163,9 +183,11 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .nest("/calls", call_routes)
         .nest("/uploads", upload_routes.clone())
         .nest("/upload", upload_routes)
+        .nest("/posts", post_routes)
+        .nest("/feed", feed_routes)
         .route("/ws", get(ws::ws_handler));
 
-    // 10. Base App Router
+    // 11. Base App Router
     let app = Router::new()
         .nest_service("/uploads", tower_http::services::ServeDir::new(&config.upload_dir))
         .nest("/api/v1", api_router)

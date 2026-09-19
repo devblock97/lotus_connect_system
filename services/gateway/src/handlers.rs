@@ -12,7 +12,9 @@ use dto::{
     AuthResponse, UserResponse, TokenResponse, GenericResponse,
     UserConversationResponse, SendMessageRequest, EditMessageRequest,
     AddReactionRequest, MessageReactionResponse,
-    UpdateAvatarRequest, AvatarUploadResponse
+    UpdateAvatarRequest, AvatarUploadResponse,
+    CreatePostRequest, UpdatePostRequest, PostResponse, AddPostReactionRequest,
+    PostReactionDetailResponse, CreateCommentRequest, CommentResponse, FeedQuery
 };
 use crate::AppState;
 use crate::ws::types::WsMessage;
@@ -869,6 +871,195 @@ pub async fn delete_message_handler(
     }))
 }
 
+// ==================== FEED & POST HANDLERS ====================
+
+pub async fn create_post_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(payload): Json<CreatePostRequest>,
+) -> Result<Json<PostResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let post = state.feed_service.create_post(claims.sub, payload).await?;
+    Ok(Json(post))
+}
+
+pub async fn get_post_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(post_id): Path<Uuid>,
+) -> Result<Json<PostResponse>> {
+    let post = state.feed_service.get_post(claims.sub, post_id).await?;
+    Ok(Json(post))
+}
+
+pub async fn update_post_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(post_id): Path<Uuid>,
+    Json(payload): Json<UpdatePostRequest>,
+) -> Result<Json<PostResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let post = state.feed_service.update_post(claims.sub, post_id, payload).await?;
+    Ok(Json(post))
+}
+
+pub async fn delete_post_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(post_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    state.feed_service.delete_post(claims.sub, post_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Post deleted successfully".to_string(),
+    }))
+}
+
+pub async fn get_home_feed_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Query(query): Query<FeedQuery>,
+) -> Result<Json<Vec<PostResponse>>> {
+    let posts = state.feed_service.get_home_feed(claims.sub, query.cursor, query.limit).await?;
+    Ok(Json(posts))
+}
+
+pub async fn get_explore_feed_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Query(query): Query<FeedQuery>,
+) -> Result<Json<Vec<PostResponse>>> {
+    let posts = state.feed_service.get_explore_feed(claims.sub, query.cursor, query.limit).await?;
+    Ok(Json(posts))
+}
+
+pub async fn get_user_posts_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(user_id): Path<Uuid>,
+    Query(query): Query<FeedQuery>,
+) -> Result<Json<Vec<PostResponse>>> {
+    let posts = state.feed_service.get_user_posts(claims.sub, user_id, query.cursor, query.limit).await?;
+    Ok(Json(posts))
+}
+
+pub async fn add_post_reaction_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(post_id): Path<Uuid>,
+    Json(payload): Json<AddPostReactionRequest>,
+) -> Result<Json<PostReactionDetailResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let reaction = payload.reaction.unwrap_or_else(|| "like".to_string());
+    let res = state.feed_service.add_reaction(claims.sub, post_id, &reaction).await?;
+
+    // Push notification to post author asynchronously
+    if let Ok(post) = state.feed_service.get_post(claims.sub, post_id).await {
+        if post.author.id != claims.sub {
+            let sender_name = match state.user_service.get_user_by_id(claims.sub).await {
+                Ok(u) => u.full_name.filter(|n| !n.trim().is_empty()).unwrap_or(u.username),
+                Err(_) => "Someone".to_string(),
+            };
+            let title = "New Reaction".to_string();
+            let body = format!("{} reacted {} to your post", sender_name, reaction);
+            let notif_data = serde_json::json!({
+                "type": "post_reaction",
+                "postId": post_id,
+                "userId": claims.sub,
+                "reaction": reaction,
+            });
+            let notif_service = state.notification_service.clone();
+            let author_id = post.author.id;
+            tokio::spawn(async move {
+                let _ = notif_service.send_notification(author_id, &title, &body, Some(notif_data)).await;
+            });
+        }
+    }
+
+    Ok(Json(res))
+}
+
+pub async fn remove_post_reaction_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(post_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    state.feed_service.remove_reaction(claims.sub, post_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Reaction removed successfully".to_string(),
+    }))
+}
+
+pub async fn get_post_reactions_handler(
+    State(state): State<AppState>,
+    Path(post_id): Path<Uuid>,
+) -> Result<Json<Vec<PostReactionDetailResponse>>> {
+    let reactions = state.feed_service.get_post_reactions(post_id).await?;
+    Ok(Json(reactions))
+}
+
+pub async fn create_comment_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(post_id): Path<Uuid>,
+    Json(payload): Json<CreateCommentRequest>,
+) -> Result<Json<CommentResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let comment = state.feed_service.add_comment(claims.sub, post_id, payload).await?;
+
+    // Push notification to post author asynchronously
+    if let Ok(post) = state.feed_service.get_post(claims.sub, post_id).await {
+        if post.author.id != claims.sub {
+            let sender_name = match state.user_service.get_user_by_id(claims.sub).await {
+                Ok(u) => u.full_name.filter(|n| !n.trim().is_empty()).unwrap_or(u.username),
+                Err(_) => "Someone".to_string(),
+            };
+            let title = "New Comment".to_string();
+            let preview = if comment.content.len() > 60 {
+                format!("{}...", &comment.content[..60])
+            } else {
+                comment.content.clone()
+            };
+            let body = format!("{}: {}", sender_name, preview);
+            let notif_data = serde_json::json!({
+                "type": "post_comment",
+                "postId": post_id,
+                "commentId": comment.id,
+                "userId": claims.sub,
+            });
+            let notif_service = state.notification_service.clone();
+            let author_id = post.author.id;
+            tokio::spawn(async move {
+                let _ = notif_service.send_notification(author_id, &title, &body, Some(notif_data)).await;
+            });
+        }
+    }
+
+    Ok(Json(comment))
+}
+
+pub async fn get_post_comments_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(post_id): Path<Uuid>,
+) -> Result<Json<Vec<CommentResponse>>> {
+    let comments = state.feed_service.get_post_comments(claims.sub, post_id).await?;
+    Ok(Json(comments))
+}
+
+pub async fn delete_comment_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path((post_id, comment_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<GenericResponse>> {
+    state.feed_service.delete_comment(claims.sub, post_id, comment_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Comment deleted successfully".to_string(),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -896,4 +1087,81 @@ mod tests {
         let query: GetMessagesQuery = serde_json::from_str(&format!(r#"{{"cursor_id": "{}"}}"#, cursor_uuid)).unwrap();
         assert_eq!(query.cursor, Some(cursor_uuid));
     }
+
+    #[test]
+    fn test_feed_query_deserialization_and_limits() {
+        let query: FeedQuery = serde_json::from_str("{}").unwrap();
+        assert_eq!(query.cursor, None);
+        assert_eq!(query.limit, None);
+        let effective_limit = query.limit.unwrap_or(20).clamp(1, 50);
+        assert_eq!(effective_limit, 20);
+
+        let query: FeedQuery = serde_json::from_str(r#"{"limit": 100}"#).unwrap();
+        let effective_limit = query.limit.unwrap_or(20).clamp(1, 50);
+        assert_eq!(effective_limit, 50);
+
+        let query: FeedQuery = serde_json::from_str(r#"{"limit": 0}"#).unwrap();
+        let effective_limit = query.limit.unwrap_or(20).clamp(1, 50);
+        assert_eq!(effective_limit, 1);
+
+        let cursor_uuid = Uuid::now_v7();
+        let query: FeedQuery = serde_json::from_str(&format!(r#"{{"cursor": "{}"}}"#, cursor_uuid)).unwrap();
+        assert_eq!(query.cursor, Some(cursor_uuid));
+    }
+
+    #[test]
+    fn test_create_post_request_deserialization() {
+        let json_str = r#"{
+            "content": "Exploring the mountains! 🏔️",
+            "mediaItems": [
+                {
+                    "url": "http://localhost:8080/uploads/mountain.jpg",
+                    "mimeType": "image/jpeg",
+                    "width": 1080,
+                    "height": 1350
+                }
+            ],
+            "visibility": "public"
+        }"#;
+
+        let req: CreatePostRequest = serde_json::from_str(json_str).unwrap();
+        assert_eq!(req.content, Some("Exploring the mountains! 🏔️".to_string()));
+        assert_eq!(req.visibility, Some("public".to_string()));
+        let media = req.media_items.unwrap();
+        assert_eq!(media.len(), 1);
+        assert_eq!(media[0].url, "http://localhost:8080/uploads/mountain.jpg");
+        assert_eq!(media[0].width, Some(1080));
+    }
+
+    #[test]
+    fn test_create_comment_request_validation() {
+        let valid_comment = CreateCommentRequest {
+            content: "Awesome picture!".to_string(),
+            parent_comment_id: None,
+        };
+        assert!(valid_comment.validate().is_ok());
+
+        let invalid_comment = CreateCommentRequest {
+            content: "".to_string(),
+            parent_comment_id: None,
+        };
+        assert!(invalid_comment.validate().is_err());
+    }
+
+    #[test]
+    fn test_add_post_reaction_request_validation() {
+        let default_reaction = AddPostReactionRequest { reaction: None };
+        assert!(default_reaction.validate().is_ok());
+
+        let valid_reaction = AddPostReactionRequest {
+            reaction: Some("love".to_string()),
+        };
+        assert!(valid_reaction.validate().is_ok());
+
+        let invalid_reaction = AddPostReactionRequest {
+            reaction: Some("".to_string()),
+        };
+        assert!(invalid_reaction.validate().is_err());
+    }
 }
+

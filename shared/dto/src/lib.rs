@@ -135,3 +135,91 @@ pub struct MessageReactionResponse {
     pub reaction: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatePostRequest {
+    pub content: Option<String>,
+    #[serde(alias = "media_items", alias = "medias")]
+    pub media_items: Option<Vec<models::MediaItem>>,
+    pub visibility: Option<String>, // 'public', 'friends', 'private'
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatePostRequest {
+    pub content: Option<String>,
+    #[serde(alias = "media_items", alias = "medias")]
+    pub media_items: Option<Vec<models::MediaItem>>,
+    pub visibility: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostAuthorResponse {
+    pub id: Uuid,
+    pub username: String,
+    pub full_name: Option<String>,
+    pub avatar_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostResponse {
+    pub id: Uuid,
+    pub author: PostAuthorResponse,
+    pub content: String,
+    pub media_items: Vec<models::MediaItem>,
+    pub visibility: String,
+    pub like_count: i64,
+    pub comment_count: i64,
+    pub user_has_liked: bool,
+    pub user_reaction: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct AddPostReactionRequest {
+    #[validate(length(min = 1, max = 32, message = "Reaction cannot be empty"))]
+    pub reaction: Option<String>, // defaults to "like"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostReactionDetailResponse {
+    pub id: Uuid,
+    pub post_id: Uuid,
+    pub user: PostAuthorResponse,
+    pub reaction: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateCommentRequest {
+    #[validate(length(min = 1, message = "Comment content cannot be empty"))]
+    pub content: String,
+    pub parent_comment_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentResponse {
+    pub id: Uuid,
+    pub post_id: Uuid,
+    pub author: PostAuthorResponse,
+    pub parent_comment_id: Option<Uuid>,
+    pub content: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedQuery {
+    pub cursor: Option<Uuid>,
+    pub limit: Option<i64>,
+}
+

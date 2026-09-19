@@ -185,6 +185,72 @@ pub struct Notification {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Post {
+    pub id: Uuid,
+    pub author_id: Uuid,
+    pub content: String,
+    pub media_items: Option<sqlx::types::Json<Vec<MediaItem>>>,
+    pub visibility: String, // 'public', 'friends', 'private'
+    pub like_count: i64,
+    pub comment_count: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PostReaction {
+    pub id: Uuid,
+    pub post_id: Uuid,
+    pub user_id: Uuid,
+    pub reaction: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PostComment {
+    pub id: Uuid,
+    pub post_id: Uuid,
+    pub user_id: Uuid,
+    pub parent_comment_id: Option<Uuid>,
+    pub content: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PostWithAuthor {
+    pub id: Uuid,
+    pub author_id: Uuid,
+    pub author_username: String,
+    pub author_full_name: Option<String>,
+    pub author_avatar_url: Option<String>,
+    pub content: String,
+    pub media_items: Option<sqlx::types::Json<Vec<MediaItem>>>,
+    pub visibility: String,
+    pub like_count: i64,
+    pub comment_count: i64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub user_has_liked: bool,
+    pub user_reaction: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct CommentWithAuthor {
+    pub id: Uuid,
+    pub post_id: Uuid,
+    pub user_id: Uuid,
+    pub author_username: String,
+    pub author_full_name: Option<String>,
+    pub author_avatar_url: Option<String>,
+    pub parent_comment_id: Option<Uuid>,
+    pub content: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

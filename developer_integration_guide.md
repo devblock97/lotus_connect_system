@@ -478,6 +478,199 @@ Sets or updates the current user's avatar URL using an already-uploaded file URL
       "duration": 180
     }
   ]
+---
+
+### 📰 Social Feed & Posts
+
+The Social Feed API powers Facebook and Instagram-style social interactions, including multi-media rich posts, personalized timelines (friends + own posts), global explore discovery, emoji reactions, and nested comment threads.
+
+All endpoints require `Authorization: Bearer <access_token>`.
+
+#### **1. Create Post**
+* **Endpoint**: `POST /posts`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "content": "Exploring the serene beauty of the countryside! 🌿✨ #travel #nature",
+    "mediaItems": [
+      {
+        "url": "http://localhost:8080/uploads/019fd520-a75b-7589-9807-6bb9fdf7e3a9-photo.jpg",
+        "mimeType": "image/jpeg",
+        "width": 1080,
+        "height": 1350
+      },
+      {
+        "url": "http://localhost:8080/uploads/019fd521-b85c-7590-9908-7cc0fef8e4ba-video.mp4",
+        "thumbnailUrl": "http://localhost:8080/uploads/019fd521-thumb.jpg",
+        "mimeType": "video/mp4",
+        "duration": 45
+      }
+    ],
+    "visibility": "public" // 'public', 'friends', or 'private' (default: 'public')
+  }
+  ```
+* **Response Model** (200 OK):
+  ```json
+  {
+    "id": "019fd530-8a12-70b1-8b01-f2d47e8e29ba",
+    "author": {
+      "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+      "username": "johndoe",
+      "fullName": "John Doe",
+      "avatarUrl": "http://localhost:8080/uploads/avatar.jpg"
+    },
+    "content": "Exploring the serene beauty of the countryside! 🌿✨ #travel #nature",
+    "mediaItems": [
+      {
+        "url": "http://localhost:8080/uploads/019fd520-a75b-7589-9807-6bb9fdf7e3a9-photo.jpg",
+        "mimeType": "image/jpeg",
+        "width": 1080,
+        "height": 1350
+      }
+    ],
+    "visibility": "public",
+    "likeCount": 0,
+    "commentCount": 0,
+    "userHasLiked": false,
+    "userReaction": null,
+    "createdAt": "2026-09-18T14:30:00Z",
+    "updatedAt": "2026-09-18T14:30:00Z"
+  }
+  ```
+
+#### **2. Get Post Details**
+* **Endpoint**: `GET /posts/:post_id`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK): Returns `PostResponse` object (same as Create Post).
+
+#### **3. Update Post**
+* **Endpoint**: `PUT /posts/:post_id` *(or `PATCH /posts/:post_id`)*
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "content": "Updated caption for the post! 🌸",
+    "visibility": "friends"
+  }
+  ```
+* **Response Model** (200 OK): Returns updated `PostResponse`.
+
+#### **4. Delete Post**
+* **Endpoint**: `DELETE /posts/:post_id`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Post deleted successfully"
+  }
+  ```
+
+#### **5. Get Home Feed (Personalized Timeline)**
+Returns posts from the authenticated user, their accepted friends, and public posts, ordered by newest first with cursor-based pagination.
+* **Endpoint**: `GET /feed?cursor=<post_uuid>&limit=<limit>`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Query Parameters**:
+  * `cursor` *(optional, UUID)*: The `id` of the last post loaded in the current page.
+  * `limit` *(optional, integer)*: Default `20`, min `1`, max `50`.
+* **Response Model** (200 OK): Array of `PostResponse` objects.
+
+#### **6. Get Explore Feed (Global Discovery)**
+Returns all public posts platform-wide, ideal for discovery (Instagram Explore style).
+* **Endpoint**: `GET /feed/explore?cursor=<post_uuid>&limit=<limit>`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK): Array of `PostResponse` objects.
+
+#### **7. Get User Profile Feed**
+Returns posts authored by a specific user. Visibility is automatically enforced based on the relationship with the viewer (self sees all, friends see public + friends, non-friends see public only).
+* **Endpoint**: `GET /users/:user_id/posts?cursor=<post_uuid>&limit=<limit>`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK): Array of `PostResponse` objects.
+
+#### **8. Add / Toggle Post Reaction**
+* **Endpoint**: `POST /posts/:post_id/reactions`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "reaction": "love" // 'like', 'love', 'haha', 'wow', 'sad', 'angry' (default: 'like')
+  }
+  ```
+* **Response Model** (200 OK):
+  ```json
+  {
+    "id": "019fd535-645b-7489-9801-112233445566",
+    "postId": "019fd530-8a12-70b1-8b01-f2d47e8e29ba",
+    "user": {
+      "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+      "username": "janedoe",
+      "fullName": "Jane Doe",
+      "avatarUrl": "http://localhost:8080/uploads/jane.jpg"
+    },
+    "reaction": "love",
+    "createdAt": "2026-09-18T14:35:00Z"
+  }
+  ```
+
+#### **9. Remove Post Reaction**
+* **Endpoint**: `DELETE /posts/:post_id/reactions`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Reaction removed successfully"
+  }
+  ```
+
+#### **10. List Post Reactions**
+* **Endpoint**: `GET /posts/:post_id/reactions`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK): Array of reaction detail objects.
+
+#### **11. Add Comment (or Reply to Comment)**
+* **Endpoint**: `POST /posts/:post_id/comments`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "content": "This looks incredible! Where was this taken?",
+    "parentCommentId": null // Set to UUID of parent comment for threaded replies
+  }
+  ```
+* **Response Model** (200 OK):
+  ```json
+  {
+    "id": "019fd540-1234-7589-9807-aabbccddeeff",
+    "postId": "019fd530-8a12-70b1-8b01-f2d47e8e29ba",
+    "author": {
+      "id": "019fa983-9f8c-7fc0-a285-fef0a8b88064",
+      "username": "janedoe",
+      "fullName": "Jane Doe",
+      "avatarUrl": "http://localhost:8080/uploads/jane.jpg"
+    },
+    "parentCommentId": null,
+    "content": "This looks incredible! Where was this taken?",
+    "createdAt": "2026-09-18T14:40:00Z",
+    "updatedAt": "2026-09-18T14:40:00Z"
+  }
+  ```
+
+#### **12. Get Post Comments**
+* **Endpoint**: `GET /posts/:post_id/comments`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK): Array of `CommentResponse` objects ordered chronologically.
+
+#### **13. Delete Comment**
+* **Endpoint**: `DELETE /posts/:post_id/comments/:comment_id`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Comment deleted successfully"
+  }
   ```
 
 ---
