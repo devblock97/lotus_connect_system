@@ -878,6 +878,7 @@ dependencies = [
  "service-auth",
  "service-call",
  "service-chat",
+ "service-feed",
  "service-notification",
  "service-presence",
  "service-signaling",
@@ -2437,6 +2438,24 @@ dependencies = [
  "models",
  "serde",
  "sqlx",
+ "uuid",
+]
+
+[[package]]
+name = "service-feed"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "database",
+ "dto",
+ "errors",
+ "models",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tracing",
  "uuid",
 ]
 

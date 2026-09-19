@@ -20,3 +20,4 @@ pub async fn init_db(config: &AppConfig) -> Result<PgPool> {
     tracing::info!("Database migrations applied successfully.");
     Ok(pool)
 }
+
