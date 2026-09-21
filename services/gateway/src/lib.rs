@@ -133,6 +133,7 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .route("/notifications", get(handlers::list_notifications_handler))
         .route("/notifications/read", post(handlers::mark_notifications_read_handler))
         .route("/notifications/:id/read", post(handlers::mark_notification_read_handler).patch(handlers::mark_notification_read_handler))
+        .route("/notifications/:id", delete(handlers::delete_notification_handler))
         .route("/:user_id/posts", get(handlers::get_user_posts_handler))
         .layer(DefaultBodyLimit::max(20 * 1024 * 1024))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));

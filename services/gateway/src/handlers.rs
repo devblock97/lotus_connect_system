@@ -676,6 +676,18 @@ pub async fn mark_notification_read_handler(
     }))
 }
 
+pub async fn delete_notification_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(notification_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    state.notification_service.delete_notification(claims.sub, notification_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Notification deleted successfully".to_string(),
+    }))
+}
+
 pub async fn send_message_handler(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,

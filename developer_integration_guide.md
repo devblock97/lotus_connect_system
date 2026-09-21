@@ -180,6 +180,21 @@ All REST endpoints are prefixed with `/api/v1` and assume JSON request and respo
   }
   ```
 
+#### **Delete a Specific Notification**
+* **Endpoint**: `DELETE /users/notifications/:notification_id`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Notification deleted successfully"
+  }
+  ```
+* **Error Responses**:
+  - `401 Unauthorized`: Missing or invalid JWT
+  - `404 Not Found`: Notification not found or does not belong to the authenticated user
+
+
 #### **Register Device Token (Push Notifications)**
 * **Endpoint**: `POST /users/devices` *(alias: `/users/device-token`)*
 * **Headers**: `Authorization: Bearer <access_token>`
