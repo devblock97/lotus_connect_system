@@ -250,6 +250,106 @@ pub struct CommentWithAuthor {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Story {
+    pub id: Uuid,
+    pub author_id: Uuid,
+    pub media_type: String, // 'image', 'video', 'text'
+    pub media_url: String,
+    pub thumbnail_url: Option<String>,
+    pub caption: Option<String>,
+    pub duration: f64,
+    pub visibility: String, // 'public', 'friends', 'close_friends'
+    pub background_color: Option<String>,
+    pub metadata: Option<sqlx::types::Json<serde_json::Value>>,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct StoryWithAuthor {
+    pub id: Uuid,
+    pub author_id: Uuid,
+    pub author_username: String,
+    pub author_full_name: Option<String>,
+    pub author_avatar_url: Option<String>,
+    pub media_type: String,
+    pub media_url: String,
+    pub thumbnail_url: Option<String>,
+    pub caption: Option<String>,
+    pub duration: f64,
+    pub visibility: String,
+    pub background_color: Option<String>,
+    pub metadata: Option<sqlx::types::Json<serde_json::Value>>,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub view_count: i64,
+    pub has_viewed: bool,
+    pub viewer_reaction: Option<String>,
+    pub is_close_friend: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct StoryView {
+    pub id: Uuid,
+    pub story_id: Uuid,
+    pub viewer_id: Uuid,
+    pub viewed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct StoryViewerWithUser {
+    pub id: Uuid,
+    pub story_id: Uuid,
+    pub viewer_id: Uuid,
+    pub viewer_username: String,
+    pub viewer_full_name: Option<String>,
+    pub viewer_avatar_url: Option<String>,
+    pub viewed_at: DateTime<Utc>,
+    pub reaction: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct StoryReaction {
+    pub id: Uuid,
+    pub story_id: Uuid,
+    pub user_id: Uuid,
+    pub reaction: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct StoryReactionWithUser {
+    pub id: Uuid,
+    pub story_id: Uuid,
+    pub user_id: Uuid,
+    pub username: String,
+    pub full_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub reaction: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct CloseFriend {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub friend_id: Uuid,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct CloseFriendWithUser {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub friend_id: Uuid,
+    pub friend_username: String,
+    pub friend_full_name: Option<String>,
+    pub friend_avatar_url: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+
 
 #[cfg(test)]
 mod tests {

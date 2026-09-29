@@ -223,3 +223,107 @@ pub struct FeedQuery {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateStoryRequest {
+    pub media_type: Option<String>, // 'image', 'video', 'text' (default: 'image')
+    #[validate(length(min = 1, message = "Media URL must not be empty"))]
+    pub media_url: String,
+    pub thumbnail_url: Option<String>,
+    pub caption: Option<String>,
+    pub duration: Option<f64>, // defaults to 5.0
+    pub visibility: Option<String>, // 'public', 'friends', 'close_friends' (default: 'friends')
+    pub background_color: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoryResponse {
+    pub id: Uuid,
+    pub author: PostAuthorResponse,
+    pub media_type: String,
+    pub media_url: String,
+    pub thumbnail_url: Option<String>,
+    pub caption: Option<String>,
+    pub duration: f64,
+    pub visibility: String,
+    pub background_color: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub view_count: i64,
+    pub has_viewed: bool,
+    pub viewer_reaction: Option<String>,
+    pub is_close_friend: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoryTrayItemResponse {
+    pub user: PostAuthorResponse,
+    pub stories: Vec<StoryResponse>,
+    pub has_unseen: bool,
+    pub total_stories: usize,
+    pub latest_story_created_at: chrono::DateTime<chrono::Utc>,
+    pub has_close_friends_story: bool,
+    pub is_self: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoryViewerResponse {
+    pub id: Uuid,
+    pub viewer: PostAuthorResponse,
+    pub viewed_at: chrono::DateTime<chrono::Utc>,
+    pub reaction: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct AddStoryReactionRequest {
+    #[validate(length(min = 1, max = 32, message = "Reaction cannot be empty"))]
+    pub reaction: Option<String>, // default: "❤️"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoryReactionResponse {
+    pub id: Uuid,
+    pub story_id: Uuid,
+    pub user: PostAuthorResponse,
+    pub reaction: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct StoryReplyRequest {
+    #[validate(length(min = 1, message = "Reply message cannot be empty"))]
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoryReplyResponse {
+    pub success: bool,
+    pub message: String,
+    pub conversation_id: Option<Uuid>,
+    pub message_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct AddCloseFriendRequest {
+    pub friend_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloseFriendResponse {
+    pub id: Uuid,
+    pub friend: PostAuthorResponse,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+
