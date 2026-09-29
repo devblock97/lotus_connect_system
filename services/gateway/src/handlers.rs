@@ -14,7 +14,10 @@ use dto::{
     AddReactionRequest, MessageReactionResponse,
     UpdateAvatarRequest, AvatarUploadResponse,
     CreatePostRequest, UpdatePostRequest, PostResponse, AddPostReactionRequest,
-    PostReactionDetailResponse, CreateCommentRequest, CommentResponse, FeedQuery
+    PostReactionDetailResponse, CreateCommentRequest, CommentResponse, FeedQuery,
+    CreateStoryRequest, StoryResponse, StoryTrayItemResponse, StoryViewerResponse,
+    AddStoryReactionRequest, StoryReactionResponse, StoryReplyRequest, StoryReplyResponse,
+    AddCloseFriendRequest, CloseFriendResponse
 };
 use crate::AppState;
 use crate::ws::types::WsMessage;
@@ -1072,9 +1075,293 @@ pub async fn delete_comment_handler(
     }))
 }
 
+// ==================== STORY HANDLERS ====================
+
+pub async fn create_story_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(payload): Json<CreateStoryRequest>,
+) -> Result<Json<StoryResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let story = state.story_service.create_story(claims.sub, payload).await?;
+    Ok(Json(story))
+}
+
+pub async fn get_stories_tray_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<Vec<StoryTrayItemResponse>>> {
+    let tray = state.story_service.get_stories_tray(claims.sub).await?;
+    Ok(Json(tray))
+}
+
+pub async fn get_my_stories_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<Vec<StoryResponse>>> {
+    let stories = state.story_service.get_my_active_stories(claims.sub).await?;
+    Ok(Json(stories))
+}
+
+pub async fn get_archived_stories_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Query(query): Query<FeedQuery>,
+) -> Result<Json<Vec<StoryResponse>>> {
+    let stories = state.story_service.get_my_archived_stories(claims.sub, query.cursor, query.limit).await?;
+    Ok(Json(stories))
+}
+
+pub async fn get_user_stories_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(user_id): Path<Uuid>,
+) -> Result<Json<Vec<StoryResponse>>> {
+    let stories = state.story_service.get_user_stories(claims.sub, user_id).await?;
+    Ok(Json(stories))
+}
+
+pub async fn get_story_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(story_id): Path<Uuid>,
+) -> Result<Json<StoryResponse>> {
+    let story = state.story_service.get_story(claims.sub, story_id).await?;
+    Ok(Json(story))
+}
+
+pub async fn delete_story_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(story_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    state.story_service.delete_story(claims.sub, story_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Story deleted successfully".to_string(),
+    }))
+}
+
+pub async fn mark_story_viewed_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(story_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    state.story_service.mark_story_viewed(claims.sub, story_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Story marked as viewed".to_string(),
+    }))
+}
+
+pub async fn get_story_viewers_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(story_id): Path<Uuid>,
+) -> Result<Json<Vec<StoryViewerResponse>>> {
+    let viewers = state.story_service.get_story_viewers(claims.sub, story_id).await?;
+    Ok(Json(viewers))
+}
+
+pub async fn add_story_reaction_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(story_id): Path<Uuid>,
+    Json(payload): Json<AddStoryReactionRequest>,
+) -> Result<Json<StoryReactionResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let reaction = payload.reaction.unwrap_or_else(|| "❤️".to_string());
+    let res = state.story_service.add_reaction(claims.sub, story_id, &reaction).await?;
+
+    // Push notification & WS event to story author asynchronously
+    if let Ok(story) = state.story_service.get_story(claims.sub, story_id).await {
+        if story.author.id != claims.sub {
+            let sender_name = match state.user_service.get_user_by_id(claims.sub).await {
+                Ok(u) => u.full_name.filter(|n| !n.trim().is_empty()).unwrap_or(u.username),
+                Err(_) => "Someone".to_string(),
+            };
+            let title = "Story Reaction".to_string();
+            let body = format!("{} reacted {} to your story", sender_name, reaction);
+            let notif_data = serde_json::json!({
+                "type": "story_reaction",
+                "storyId": story_id.to_string(),
+                "userId": claims.sub,
+                "reaction": reaction,
+            });
+            let author_id = story.author.id;
+            let reaction_str = reaction.clone();
+            let ws_manager = state.ws_manager.clone();
+            let notification_service = state.notification_service.clone();
+
+            tokio::spawn(async move {
+                // Realtime WS event
+                ws_manager.send_to_user(author_id, WsMessage {
+                    event: "story:reaction".to_string(),
+                    payload: serde_json::json!({
+                        "storyId": story_id,
+                        "userId": claims.sub,
+                        "username": sender_name,
+                        "reaction": reaction_str,
+                    }),
+                }).await;
+
+                // Push notification
+                let _ = notification_service.send_notification(
+                    author_id,
+                    &title,
+                    &body,
+                    Some(notif_data),
+                ).await;
+            });
+        }
+    }
+
+    Ok(Json(res))
+}
+
+pub async fn remove_story_reaction_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(story_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    state.story_service.remove_reaction(claims.sub, story_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Reaction removed successfully".to_string(),
+    }))
+}
+
+pub async fn get_story_reactions_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(story_id): Path<Uuid>,
+) -> Result<Json<Vec<StoryReactionResponse>>> {
+    let reactions = state.story_service.get_story_reactions(claims.sub, story_id).await?;
+    Ok(Json(reactions))
+}
+
+pub async fn reply_to_story_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(story_id): Path<Uuid>,
+    Json(payload): Json<StoryReplyRequest>,
+) -> Result<Json<StoryReplyResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let story = state.story_service.get_story(claims.sub, story_id).await?;
+
+    if story.author.id == claims.sub {
+        return Err(AppError::Validation("Cannot reply to your own story".to_string()));
+    }
+
+    // Automatically get or create private 1-to-1 conversation with story author
+    let conv = state.chat_service.create_private_chat(claims.sub, story.author.id).await?;
+
+    // Create chat message with story context
+    let formatted_content = if let Some(cap) = &story.caption {
+        if !cap.trim().is_empty() {
+            format!("[Replying to story: \"{}\"]\n{}", cap, payload.message)
+        } else {
+            format!("[Replying to story]\n{}", payload.message)
+        }
+    } else {
+        format!("[Replying to story]\n{}", payload.message)
+    };
+
+    let send_req = SendMessageRequest {
+        content: Some(formatted_content),
+        message_type: Some("text".to_string()),
+        reply_to_id: None,
+        media_url: Some(story.media_url.clone()),
+        thumbnail_url: story.thumbnail_url.clone(),
+        file_name: None,
+        file_size: None,
+        mime_type: Some(match story.media_type.as_str() {
+            "video" => "video/mp4".to_string(),
+            _ => "image/jpeg".to_string(),
+        }),
+        duration: Some(story.duration as i32),
+        media_items: None,
+    };
+
+    let msg = state.chat_service.send_message(claims.sub, conv.id, send_req).await?;
+
+    // Realtime WS delivery to author
+    let author_id = story.author.id;
+    let sender_name = match state.user_service.get_user_by_id(claims.sub).await {
+        Ok(u) => u.full_name.filter(|n| !n.trim().is_empty()).unwrap_or(u.username),
+        Err(_) => "Someone".to_string(),
+    };
+    let title = format!("New story reply from {}", sender_name);
+    let body = format!("{}: {}", sender_name, payload.message);
+    let reply_data = serde_json::json!({
+        "type": "story_reply",
+        "storyId": story_id.to_string(),
+        "conversationId": conv.id.to_string(),
+        "messageId": msg.id.to_string(),
+    });
+    let ws_manager = state.ws_manager.clone();
+    let notification_service = state.notification_service.clone();
+    let msg_clone = msg.clone();
+
+    tokio::spawn(async move {
+        ws_manager.send_to_user(author_id, WsMessage {
+            event: "chat:message".to_string(),
+            payload: serde_json::json!(msg_clone),
+        }).await;
+
+        let _ = notification_service.send_notification(
+            author_id,
+            &title,
+            &body,
+            Some(reply_data),
+        ).await;
+    });
+
+    Ok(Json(StoryReplyResponse {
+        success: true,
+        message: "Story reply sent successfully".to_string(),
+        conversation_id: Some(conv.id),
+        message_id: Some(msg.id),
+    }))
+}
+
+pub async fn list_close_friends_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<Vec<CloseFriendResponse>>> {
+    let friends = state.story_service.list_close_friends(claims.sub).await?;
+    Ok(Json(friends))
+}
+
+pub async fn add_close_friend_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(payload): Json<AddCloseFriendRequest>,
+) -> Result<Json<GenericResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    state.story_service.add_close_friend(claims.sub, payload.friend_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Close friend added successfully".to_string(),
+    }))
+}
+
+pub async fn remove_close_friend_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(friend_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    state.story_service.remove_close_friend(claims.sub, friend_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Close friend removed successfully".to_string(),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dto::PostAuthorResponse;
 
     #[test]
     fn test_get_messages_query_defaults_and_limits() {
@@ -1175,5 +1462,116 @@ mod tests {
         };
         assert!(invalid_reaction.validate().is_err());
     }
+
+    #[test]
+    fn test_create_story_request_validation() {
+        let valid_story = CreateStoryRequest {
+            media_type: Some("image".to_string()),
+            media_url: "http://localhost:8080/uploads/story1.jpg".to_string(),
+            thumbnail_url: None,
+            caption: Some("Enjoying sunset! 🌅".to_string()),
+            duration: Some(5.0),
+            visibility: Some("friends".to_string()),
+            background_color: None,
+            metadata: Some(serde_json::json!({
+                "stickers": [{"type": "mention", "username": "jane"}]
+            })),
+        };
+        assert!(valid_story.validate().is_ok());
+
+        let invalid_story = CreateStoryRequest {
+            media_type: None,
+            media_url: "".to_string(),
+            thumbnail_url: None,
+            caption: None,
+            duration: None,
+            visibility: None,
+            background_color: None,
+            metadata: None,
+        };
+        assert!(invalid_story.validate().is_err());
+    }
+
+    #[test]
+    fn test_add_story_reaction_request_validation() {
+        let default_reaction = AddStoryReactionRequest { reaction: None };
+        assert!(default_reaction.validate().is_ok());
+
+        let valid_reaction = AddStoryReactionRequest {
+            reaction: Some("🔥".to_string()),
+        };
+        assert!(valid_reaction.validate().is_ok());
+
+        let invalid_reaction = AddStoryReactionRequest {
+            reaction: Some("".to_string()),
+        };
+        assert!(invalid_reaction.validate().is_err());
+    }
+
+    #[test]
+    fn test_story_reply_request_validation() {
+        let valid_reply = StoryReplyRequest {
+            message: "Looks incredible!".to_string(),
+        };
+        assert!(valid_reply.validate().is_ok());
+
+        let invalid_reply = StoryReplyRequest {
+            message: "".to_string(),
+        };
+        assert!(invalid_reply.validate().is_err());
+    }
+
+    #[test]
+    fn test_story_tray_item_response_serialization() {
+        let user_id = Uuid::now_v7();
+        let story_id = Uuid::now_v7();
+        let now = chrono::Utc::now();
+
+        let story = StoryResponse {
+            id: story_id,
+            author: PostAuthorResponse {
+                id: user_id,
+                username: "alex".to_string(),
+                full_name: Some("Alex Mercer".to_string()),
+                avatar_url: Some("http://localhost:8080/uploads/alex.jpg".to_string()),
+            },
+            media_type: "image".to_string(),
+            media_url: "http://localhost:8080/uploads/story.jpg".to_string(),
+            thumbnail_url: None,
+            caption: Some("Hello World".to_string()),
+            duration: 5.0,
+            visibility: "close_friends".to_string(),
+            background_color: None,
+            metadata: None,
+            created_at: now,
+            expires_at: now + chrono::Duration::hours(24),
+            view_count: 12,
+            has_viewed: false,
+            viewer_reaction: Some("❤️".to_string()),
+            is_close_friend: true,
+        };
+
+        let tray_item = StoryTrayItemResponse {
+            user: story.author.clone(),
+            stories: vec![story],
+            has_unseen: true,
+            total_stories: 1,
+            latest_story_created_at: now,
+            has_close_friends_story: true,
+            is_self: false,
+        };
+
+        let json = serde_json::to_value(&tray_item).unwrap();
+        assert_eq!(json["hasUnseen"], true);
+        assert_eq!(json["hasCloseFriendsStory"], true);
+        assert_eq!(json["isSelf"], false);
+        assert_eq!(json["totalStories"], 1);
+        assert_eq!(json["stories"][0]["id"], story_id.to_string());
+        assert_eq!(json["stories"][0]["visibility"], "close_friends");
+        assert_eq!(json["stories"][0]["isCloseFriend"], true);
+        assert_eq!(json["stories"][0]["hasViewed"], false);
+        assert_eq!(json["stories"][0]["viewerReaction"], "❤️");
+    }
 }
+
 

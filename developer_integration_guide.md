@@ -690,6 +690,359 @@ Returns posts authored by a specific user. Visibility is automatically enforced 
 
 ---
 
+### 📸 Ephemeral Stories (Instagram Style)
+
+The Stories API provides an Instagram-grade story experience featuring 24-hour ephemerality, rich media overlays, personalized Close Friends privacy (with iconic green-ring badges), interactive seen tracking, quick emoji reactions, and direct chat replies.
+
+All endpoints require `Authorization: Bearer <access_token>`.
+
+#### **1. Story Lifecycle & Architecture Flow**
+
+```mermaid
+sequenceDiagram
+    participant UserA as Author (User A)
+    participant Server as Gateway API
+    participant UserB as Viewer (User B)
+
+    UserA->>Server: POST /stories (mediaUrl, caption, visibility: "close_friends")
+    Note over Server: Story saved with 24h expiration timestamp
+    
+    UserB->>Server: GET /stories/tray
+    Server-->>UserB: Returns Tray items [UserA: hasUnseen: true, hasCloseFriendsStory: true (Green Ring)]
+    
+    UserB->>Server: GET /stories/user/:user_id (or views from tray)
+    UserB->>Server: POST /stories/:story_id/view (Seen Beacon)
+    Server-->>UserB: 200 OK (view count incremented)
+
+    UserB->>Server: POST /stories/:story_id/reactions {"reaction": "🔥"}
+    Server-->>UserA: Realtime WS "story:reaction" & Push Notification
+
+    UserB->>Server: POST /stories/:story_id/reply {"message": "Where is this?!"}
+    Server-->>UserA: 1-to-1 Chat DM with story snapshot preview + WS "chat:message"
+```
+
+---
+
+#### **2. Create Story**
+Publishes an image, video, or text story expiring automatically in 24 hours.
+* **Endpoint**: `POST /stories`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "mediaType": "image", // 'image', 'video', or 'text' (default: 'image')
+    "mediaUrl": "http://localhost:8080/uploads/019fd520-a75b-story.jpg",
+    "thumbnailUrl": "http://localhost:8080/uploads/019fd520-thumb.jpg", // optional (for video)
+    "caption": "Sunset golden hour at the beach! 🌅✨", // optional
+    "duration": 5.0, // seconds to display (default: 5.0 for photos, up to 60.0 for videos)
+    "visibility": "close_friends", // 'public', 'friends', or 'close_friends' (default: 'friends')
+    "backgroundColor": "#1A1A24", // optional background color / gradient hex code
+    "metadata": { // optional rich metadata for stickers, tags, coordinates
+      "stickers": [
+        { "type": "location", "name": "Da Nang, Vietnam", "lat": 16.0544, "lng": 108.2022 },
+        { "type": "mention", "username": "janedoe" }
+      ]
+    }
+  }
+  ```
+* **Response Model** (200 OK / 201 Created):
+  ```json
+  {
+    "id": "019fe120-7b23-7fa1-92b3-5511aa223344",
+    "author": {
+      "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+      "username": "johndoe",
+      "fullName": "John Doe",
+      "avatarUrl": "http://localhost:8080/uploads/avatar.jpg"
+    },
+    "mediaType": "image",
+    "mediaUrl": "http://localhost:8080/uploads/019fd520-a75b-story.jpg",
+    "thumbnailUrl": "http://localhost:8080/uploads/019fd520-thumb.jpg",
+    "caption": "Sunset golden hour at the beach! 🌅✨",
+    "duration": 5.0,
+    "visibility": "close_friends",
+    "backgroundColor": "#1A1A24",
+    "metadata": { ... },
+    "createdAt": "2026-09-28T10:00:00Z",
+    "expiresAt": "2026-09-29T10:00:00Z",
+    "viewCount": 0,
+    "hasViewed": false,
+    "viewerReaction": null,
+    "isCloseFriend": true
+  }
+  ```
+
+---
+
+#### **3. Get Stories Tray / Feed (Instagram Top Bar)**
+Powers the horizontal story tray at the top of the app feed.
+* **Endpoint**: `GET /stories/tray` *(or alias `GET /stories/feed`)*
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Tray Sorting Order**:
+  1. The authenticated user's own active stories (`isSelf: true`) appear first.
+  2. Friends with unseen stories (`hasUnseen: true`), sorted by newest story first.
+  3. Friends whose stories have all been watched (`hasUnseen: false`), sorted by newest story first.
+* **UI Indicator Flags**:
+  * `hasUnseen: true`: Display colorful Instagram gradient ring around avatar.
+  * `hasCloseFriendsStory: true`: Display iconic green ring around avatar.
+* **Response Model** (200 OK):
+  ```json
+  [
+    {
+      "user": {
+        "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+        "username": "johndoe",
+        "fullName": "John Doe",
+        "avatarUrl": "http://localhost:8080/uploads/john.jpg"
+      },
+      "stories": [
+        {
+          "id": "019fe120-7b23-7fa1-92b3-5511aa223344",
+          "author": { ... },
+          "mediaType": "image",
+          "mediaUrl": "http://localhost:8080/uploads/story1.jpg",
+          "duration": 5.0,
+          "visibility": "friends",
+          "viewCount": 8,
+          "hasViewed": true,
+          "viewerReaction": null,
+          "isCloseFriend": true,
+          "createdAt": "2026-09-28T08:30:00Z",
+          "expiresAt": "2026-09-29T08:30:00Z"
+        }
+      ],
+      "hasUnseen": false,
+      "totalStories": 1,
+      "latestStoryCreatedAt": "2026-09-28T08:30:00Z",
+      "hasCloseFriendsStory": false,
+      "isSelf": true
+    },
+    {
+      "user": {
+        "id": "019fa983-9f8c-7fc0-a285-fef0a8b88064",
+        "username": "janedoe",
+        "fullName": "Jane Doe",
+        "avatarUrl": "http://localhost:8080/uploads/jane.jpg"
+      },
+      "stories": [
+        {
+          "id": "019fe125-11aa-7fc2-b883-fae431debcab",
+          "author": { ... },
+          "mediaType": "image",
+          "mediaUrl": "http://localhost:8080/uploads/jane_story.jpg",
+          "duration": 5.0,
+          "visibility": "close_friends",
+          "viewCount": 3,
+          "hasViewed": false,
+          "viewerReaction": null,
+          "isCloseFriend": true,
+          "createdAt": "2026-09-28T09:15:00Z",
+          "expiresAt": "2026-09-29T09:15:00Z"
+        }
+      ],
+      "hasUnseen": true,
+      "totalStories": 1,
+      "latestStoryCreatedAt": "2026-09-28T09:15:00Z",
+      "hasCloseFriendsStory": true,
+      "isSelf": false
+    }
+  ]
+  ```
+
+---
+
+#### **4. Get User Stories**
+Returns all active stories for a specific user, filtered according to privacy permissions (viewer must be friend or close friend if restricted).
+* **Endpoint**: `GET /stories/user/:user_id`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK): Array of `StoryResponse` objects in chronological order.
+
+---
+
+#### **5. Get My Active Stories**
+Returns the authenticated user's currently active stories with real-time view counts and stats.
+* **Endpoint**: `GET /stories/me`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK): Array of `StoryResponse` objects.
+
+---
+
+#### **6. Get My Archived Stories (Story Archive)**
+Returns past expired stories authored by the authenticated user with pagination.
+* **Endpoint**: `GET /stories/archive?cursor=<story_uuid>&limit=<limit>`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Query Parameters**:
+  * `cursor` *(optional, UUID)*: The `id` of the last story loaded.
+  * `limit` *(optional, integer)*: Default `20`, min `1`, max `50`.
+* **Response Model** (200 OK): Array of `StoryResponse` objects.
+
+---
+
+#### **7. Get Single Story Details**
+* **Endpoint**: `GET /stories/:story_id`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK): `StoryResponse` object.
+
+---
+
+#### **8. Delete Story**
+Permanently removes a story before the 24-hour expiration window closes.
+* **Endpoint**: `DELETE /stories/:story_id`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Story deleted successfully"
+  }
+  ```
+
+---
+
+#### **9. Mark Story as Viewed (Seen Beacon)**
+Sent by the client when a story begins playing. Updates seen status idempotently and increments viewer metrics.
+* **Endpoint**: `POST /stories/:story_id/view` *(or alias `POST /stories/:story_id/seen`)*
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Story marked as viewed"
+  }
+  ```
+
+---
+
+#### **10. Get Story Viewers (Author Drawer)**
+Returns the complete list of users who watched the story, including timestamp and their quick reaction if any. Only accessible by the story author.
+* **Endpoint**: `GET /stories/:story_id/viewers`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  [
+    {
+      "id": "019fe130-99aa-7821-bb11-9876543210ab",
+      "viewer": {
+        "id": "019fa983-9f8c-7fc0-a285-fef0a8b88064",
+        "username": "janedoe",
+        "fullName": "Jane Doe",
+        "avatarUrl": "http://localhost:8080/uploads/jane.jpg"
+      },
+      "viewedAt": "2026-09-28T09:45:00Z",
+      "reaction": "🔥"
+    }
+  ]
+  ```
+
+---
+
+#### **11. Send Quick Reaction**
+Sends an emoji reaction to the story (e.g. `❤️`, `🔥`, `😂`, `😮`, `😢`, `👏`). Dispatches a real-time `story:reaction` WebSocket event and push notification to the author.
+* **Endpoint**: `POST /stories/:story_id/reactions`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "reaction": "🔥" // defaults to '❤️' if omitted
+  }
+  ```
+* **Response Model** (200 OK):
+  ```json
+  {
+    "id": "019fe135-22bb-7733-8844-010203040506",
+    "storyId": "019fe120-7b23-7fa1-92b3-5511aa223344",
+    "user": {
+      "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+      "username": "johndoe",
+      "fullName": "John Doe",
+      "avatarUrl": "http://localhost:8080/uploads/john.jpg"
+    },
+    "reaction": "🔥",
+    "createdAt": "2026-09-28T10:05:00Z"
+  }
+  ```
+
+---
+
+#### **12. Remove Quick Reaction**
+* **Endpoint**: `DELETE /stories/:story_id/reactions`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Reaction removed successfully"
+  }
+  ```
+
+---
+
+#### **13. Reply to Story (Direct Chat Message)**
+Sends a direct text message in response to a story. Automatically locates or creates a private 1-to-1 conversation between viewer and story author, posts a message with story snapshot preview, and triggers real-time WebSocket delivery and push notifications.
+* **Endpoint**: `POST /stories/:story_id/reply`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "message": "This looks awesome! What camera did you use? 📸"
+  }
+  ```
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Story reply sent successfully",
+    "conversationId": "019fc863-2500-7012-bcb9-dc61cef4c8e1",
+    "messageId": "019fe140-55cc-7011-aa99-1234567890ab"
+  }
+  ```
+
+---
+
+#### **14. Close Friends List Management**
+Allows users to maintain their private Close Friends list for restricted story sharing.
+* **List Close Friends**: `GET /users/close-friends` *(or `GET /stories/close-friends`)*
+  * **Response Model** (200 OK):
+    ```json
+    [
+      {
+        "id": "019fe145-33dd-7711-bbaa-556677889900",
+        "friend": {
+          "id": "019fa983-9f8c-7fc0-a285-fef0a8b88064",
+          "username": "janedoe",
+          "fullName": "Jane Doe",
+          "avatarUrl": "http://localhost:8080/uploads/jane.jpg"
+        },
+        "createdAt": "2026-09-25T14:20:00Z"
+      }
+    ]
+    ```
+* **Add Close Friend**: `POST /users/close-friends` *(or `POST /stories/close-friends`)*
+  * **Request Model**:
+    ```json
+    {
+      "friendId": "019fa983-9f8c-7fc0-a285-fef0a8b88064"
+    }
+    ```
+  * **Response Model** (200 OK):
+    ```json
+    {
+      "success": true,
+      "message": "Close friend added successfully"
+    }
+    ```
+* **Remove Close Friend**: `DELETE /users/close-friends/:friend_id` *(or `DELETE /stories/close-friends/:friend_id`)*
+  * **Response Model** (200 OK):
+    ```json
+    {
+      "success": true,
+      "message": "Close friend removed successfully"
+    }
+    ```
+
+---
+
+
 ## 🔌 2. WebSocket Protocol Schema
 
 WebSocket endpoints require query-parameter-based JWT authentication (`/ws?token=<token>`). WebSocket message envelopes use a consistent structure:

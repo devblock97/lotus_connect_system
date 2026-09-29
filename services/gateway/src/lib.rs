@@ -33,17 +33,18 @@ pub struct AppState {
     pub storage_provider: Arc<dyn service_upload::StorageProvider>,
     pub notification_service: Arc<dyn service_notification::NotificationService>,
     pub feed_service: Arc<dyn service_feed::FeedService>,
+    pub story_service: Arc<dyn service_story::StoryService>,
     pub ws_manager: ws::manager::WsManager,
 }
 
 pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
-    // 1. Initialize Redis client and connection manager
+    // Initialize Redis client and connection manager
     let redis_client = redis::Client::open(config.redis_url.clone())
         .map_err(|err| errors::AppError::Internal(format!("Failed to open Redis: {}", err)))?;
     let redis_conn = redis_client.get_connection_manager().await
         .map_err(|err| errors::AppError::Internal(format!("Failed to connect to Redis: {}", err)))?;
 
-    // 2. Initialize Repositories and Services (Dependency Injection)
+    // Initialize Repositories and Services (Dependency Injection)
     let user_repo = Arc::new(service_users::UserRepositoryImpl::new(pool.clone()));
     let user_service = Arc::new(service_users::UserServiceImpl::new(user_repo));
 
@@ -65,6 +66,9 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
 
     let feed_repo = Arc::new(service_feed::FeedRepositoryImpl::new(pool.clone()));
     let feed_service = Arc::new(service_feed::FeedServiceImpl::new(feed_repo));
+
+    let story_repo = Arc::new(service_story::StoryRepositoryImpl::new(pool.clone()));
+    let story_service = Arc::new(service_story::StoryServiceImpl::new(story_repo));
 
     let storage_provider = service_upload::create_storage_provider(&config);
 
@@ -96,25 +100,26 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         chat_service,
         call_service,
         feed_service,
+        story_service,
         storage_provider,
         notification_service,
         ws_manager,
     };
 
-    // 3. Setup CORS
+    // Setup CORS
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
 
-    // 4. Build Auth router
+    // Build Auth router
     let auth_routes = Router::new()
         .route("/register", post(handlers::register_handler))
         .route("/login", post(handlers::login_handler))
         .route("/refresh", post(handlers::refresh_handler))
         .route("/logout", post(handlers::logout_handler));
 
-    // 5. Build Users router (protected by auth)
+    // Build Users router (protected by auth)
     let user_routes = Router::new()
         .route("/me", get(handlers::get_me_handler))
         .route("/avatar", post(handlers::upload_avatar_handler).put(handlers::update_avatar_url_handler).patch(handlers::update_avatar_url_handler))
@@ -134,11 +139,13 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .route("/notifications/read", post(handlers::mark_notifications_read_handler))
         .route("/notifications/:id/read", post(handlers::mark_notification_read_handler).patch(handlers::mark_notification_read_handler))
         .route("/notifications/:id", delete(handlers::delete_notification_handler))
+        .route("/close-friends", get(handlers::list_close_friends_handler).post(handlers::add_close_friend_handler))
+        .route("/close-friends/:friend_id", delete(handlers::remove_close_friend_handler))
         .route("/:user_id/posts", get(handlers::get_user_posts_handler))
         .layer(DefaultBodyLimit::max(20 * 1024 * 1024))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
-    // 6. Build Chats router (protected by auth)
+    // Build Chats router (protected by auth)
     let chat_routes = Router::new()
         .route("/", get(handlers::list_conversations_handler))
         .route("/private", post(handlers::create_private_chat_handler))
@@ -149,12 +156,12 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .route("/messages/:message_id/reactions/:reaction", delete(handlers::remove_reaction_handler))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
-    // 7. Build Calls router (protected by auth)
+    // Build Calls router (protected by auth)
     let call_routes = Router::new()
         .route("/history", get(handlers::get_calls_history_handler))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
-    // 8. Build Uploads router (protected by auth, with 250MB limit for video/mov files)
+    // Build Uploads router (protected by auth, with 250MB limit for video/mov files)
     let upload_routes = Router::new()
         .route("/", post(handlers::upload_file_handler))
         .route("/multiple", post(handlers::upload_multiple_files_handler))
@@ -162,7 +169,7 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .layer(DefaultBodyLimit::max(250 * 1024 * 1024))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
-    // 9. Build Posts & Feed routers (protected by auth)
+    // Build Posts & Feed routers (protected by auth)
     let post_routes = Router::new()
         .route("/", post(handlers::create_post_handler))
         .route("/:post_id", get(handlers::get_post_handler).put(handlers::update_post_handler).patch(handlers::update_post_handler).delete(handlers::delete_post_handler))
@@ -176,7 +183,25 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .route("/explore", get(handlers::get_explore_feed_handler))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
-    // 10. Combine all routers under versioned api prefix
+    // Build Stories router (protected by auth)
+    let story_routes = Router::new()
+        .route("/", post(handlers::create_story_handler))
+        .route("/tray", get(handlers::get_stories_tray_handler))
+        .route("/feed", get(handlers::get_stories_tray_handler))
+        .route("/me", get(handlers::get_my_stories_handler))
+        .route("/archive", get(handlers::get_archived_stories_handler))
+        .route("/close-friends", get(handlers::list_close_friends_handler).post(handlers::add_close_friend_handler))
+        .route("/close-friends/:friend_id", delete(handlers::remove_close_friend_handler))
+        .route("/user/:user_id", get(handlers::get_user_stories_handler))
+        .route("/:story_id", get(handlers::get_story_handler).delete(handlers::delete_story_handler))
+        .route("/:story_id/view", post(handlers::mark_story_viewed_handler))
+        .route("/:story_id/seen", post(handlers::mark_story_viewed_handler))
+        .route("/:story_id/viewers", get(handlers::get_story_viewers_handler))
+        .route("/:story_id/reactions", get(handlers::get_story_reactions_handler).post(handlers::add_story_reaction_handler).delete(handlers::remove_story_reaction_handler))
+        .route("/:story_id/reply", post(handlers::reply_to_story_handler))
+        .layer(axum_middleware::from_fn(self::middleware::require_auth));
+
+    // Combine all routers under versioned api prefix
     let api_router = Router::new()
         .nest("/auth", auth_routes)
         .nest("/users", user_routes)
@@ -186,9 +211,10 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .nest("/upload", upload_routes)
         .nest("/posts", post_routes)
         .nest("/feed", feed_routes)
+        .nest("/stories", story_routes)
         .route("/ws", get(ws::ws_handler));
 
-    // 11. Base App Router
+    // Base App Router
     let app = Router::new()
         .nest_service("/uploads", tower_http::services::ServeDir::new(&config.upload_dir))
         .nest("/api/v1", api_router)
@@ -202,7 +228,7 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .layer(Extension(config.clone()))
         .with_state(state);
 
-    // 11. Bind and run
+    // Bind and run
     let addr = SocketAddr::new(
         config.host.parse().unwrap_or([0, 0, 0, 0].into()),
         config.port,

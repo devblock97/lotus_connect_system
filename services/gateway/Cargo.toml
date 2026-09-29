@@ -21,6 +21,7 @@ uuid = { workspace = true }
 auth = { workspace = true }
 dto = { workspace = true }
 models = { workspace = true }
+sqlx = { workspace = true }
 
 # Service Dependencies
 service-auth = { path = "../auth" }
@@ -31,6 +32,7 @@ service-signaling = { path = "../signaling" }
 service-call = { path = "../call" }
 service-notification = { path = "../notification" }
 service-feed = { path = "../feed" }
+service-story = { path = "../story" }
 chrono = { workspace = true }
 service-upload = { path = "../upload" }
 redis = { workspace = true }
