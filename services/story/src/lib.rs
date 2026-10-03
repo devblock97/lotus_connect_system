@@ -695,6 +695,13 @@ impl StoryService for StoryServiceImpl {
             entry.1.push(resp);
         }
 
+        // Ensure viewer (self) is always included in the tray (e.g. for the "Your Story" item in mobile UI)
+        if !grouped.contains_key(&viewer_id) {
+            if let Ok(Some(me)) = self.repo.find_user_by_id(viewer_id).await {
+                grouped.insert(viewer_id, (me, Vec::new(), false, false, Utc::now()));
+            }
+        }
+
         let mut tray_items: Vec<StoryTrayItemResponse> = grouped.into_iter().map(|(author_id, (user, stories, has_unseen, has_close_friends_story, latest_time))| {
             let is_self = author_id == viewer_id;
             let total_stories = stories.len();

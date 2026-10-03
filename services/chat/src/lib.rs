@@ -148,23 +148,21 @@ impl ChatRepository for ChatRepositoryImpl {
     }
 
     async fn list_members(&self, conversation_id: Uuid) -> Result<Vec<Uuid>> {
-        let rows = sqlx::query!(
-            "SELECT user_id FROM conversation_members WHERE conversation_id = $1",
-            conversation_id
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT user_id FROM conversation_members WHERE conversation_id = $1"
         )
+        .bind(conversation_id)
         .fetch_all(&self.pool)
         .await
-        .map_err(AppError::Database)?;
-
-        Ok(rows.into_iter().map(|r| r.user_id).collect())
+        .map_err(AppError::Database)
     }
 
     async fn is_member(&self, conversation_id: Uuid, user_id: Uuid) -> Result<bool> {
-        let row = sqlx::query!(
-            "SELECT 1 as has_member FROM conversation_members WHERE conversation_id = $1 AND user_id = $2",
-            conversation_id,
-            user_id
+        let row = sqlx::query_scalar::<_, i32>(
+            "SELECT 1 FROM conversation_members WHERE conversation_id = $1 AND user_id = $2"
         )
+        .bind(conversation_id)
+        .bind(user_id)
         .fetch_optional(&self.pool)
         .await
         .map_err(AppError::Database)?;

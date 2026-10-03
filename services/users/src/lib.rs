@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use uuid::Uuid;
+use chrono::{DateTime, Utc};
 use models::{User, Friendship};
 use errors::{AppError, Result};
 use database::PgPool;
@@ -47,6 +48,20 @@ impl UserRepositoryImpl {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
+}
+
+#[derive(sqlx::FromRow)]
+struct SearchUserRow {
+    id: Uuid,
+    username: String,
+    full_name: Option<String>,
+    email: String,
+    password_hash: String,
+    avatar_url: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    friendship_status: Option<String>,
+    friendship_sender_id: Option<Uuid>,
 }
 
 #[async_trait::async_trait]
@@ -108,7 +123,7 @@ impl UserRepository for UserRepositoryImpl {
 
     async fn search(&self, query: &str, current_user_id: Uuid) -> Result<Vec<(User, Option<String>, Option<Uuid>)>> {
         let db_query = format!("%{}%", query);
-        let rows = sqlx::query!(
+        let rows = sqlx::query_as::<_, SearchUserRow>(
             r#"
             SELECT 
                 u.id, 
@@ -119,8 +134,8 @@ impl UserRepository for UserRepositoryImpl {
                 u.avatar_url,
                 u.created_at, 
                 u.updated_at,
-                f.status AS "friendship_status?",
-                f.user_id AS "friendship_sender_id?"
+                f.status AS friendship_status,
+                f.user_id AS friendship_sender_id
             FROM users u
             LEFT JOIN friendships f ON 
                 (f.user_id = $2 AND f.friend_id = u.id) OR 
@@ -128,9 +143,9 @@ impl UserRepository for UserRepositoryImpl {
             WHERE (u.username ILIKE $1 OR u.email ILIKE $1 OR u.full_name ILIKE $1) AND u.id != $2
             LIMIT 50
             "#,
-            db_query,
-            current_user_id
         )
+        .bind(db_query)
+        .bind(current_user_id)
         .fetch_all(&self.pool)
         .await
         .map_err(AppError::Database)?;
