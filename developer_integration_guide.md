@@ -735,7 +735,7 @@ Publishes an image, video, or text story expiring automatically in 24 hours.
     "thumbnailUrl": "http://localhost:8080/uploads/019fd520-thumb.jpg", // optional (for video)
     "caption": "Sunset golden hour at the beach! 🌅✨", // optional
     "duration": 5.0, // seconds to display (default: 5.0 for photos, up to 60.0 for videos)
-    "visibility": "close_friends", // 'public', 'friends', or 'close_friends' (default: 'friends')
+    "visibility": "friends", // 'public', 'friends' (all accepted friends), or 'close_friends' (only friends in Close Friends list)
     "backgroundColor": "#1A1A24", // optional background color / gradient hex code
     "metadata": { // optional rich metadata for stickers, tags, coordinates
       "stickers": [

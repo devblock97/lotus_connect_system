@@ -23,13 +23,15 @@ async fn test_create_post_with_user_payload() {
     let feed_service = Arc::new(FeedServiceImpl::new(feed_repo));
 
     let author_id = Uuid::now_v7();
-    let _ = sqlx::query!(
-        "INSERT INTO users (id, username, email, password_hash) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
-        author_id,
-        format!("user_{}", author_id),
-        format!("user_{}@example.com", author_id),
-        "hash"
+    let username = format!("user_{}", author_id);
+    let email = format!("user_{}@example.com", author_id);
+    let _ = sqlx::query(
+        "INSERT INTO users (id, username, email, password_hash) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING"
     )
+    .bind(author_id)
+    .bind(username)
+    .bind(email)
+    .bind("hash")
     .execute(&pool)
     .await;
 
@@ -55,7 +57,8 @@ async fn test_create_post_with_user_payload() {
 
     // Clean up test post and user
     let _ = feed_service.delete_post(author_id, post.id).await;
-    let _ = sqlx::query!("DELETE FROM users WHERE id = $1", author_id)
+    let _ = sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(author_id)
         .execute(&pool)
         .await;
 }
