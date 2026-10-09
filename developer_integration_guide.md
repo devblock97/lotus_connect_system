@@ -645,13 +645,15 @@ Returns posts authored by a specific user. Visibility is automatically enforced 
 * **Response Model** (200 OK): Array of reaction detail objects.
 
 #### **11. Add Comment (or Reply to Comment)**
+Adds a top-level comment or a threaded reply to a post (supporting media attachments like stickers/GIFs/images), replying to an existing reply automatically threads under the root comment in a clean 2-tier conversation. Dispatches a real-time `comment:created` WebSocket event and push notifications to the post author (and to the parent comment author if replying).
 * **Endpoint**: `POST /posts/:post_id/comments`
 * **Headers**: `Authorization: Bearer <access_token>`
 * **Request Model**:
   ```json
   {
-    "content": "This looks incredible! Where was this taken?",
-    "parentCommentId": null // Set to UUID of parent comment for threaded replies
+    "content": "This looks incredible! Where was this taken? 🎉",
+    "parentCommentId": null, // UUID of parent comment for threaded replies (or null for root comment)
+    "mediaUrl": "http://localhost:8080/uploads/stickers/party.gif" // Optional sticker/GIF/image attachment
   }
   ```
 * **Response Model** (200 OK):
@@ -666,25 +668,125 @@ Returns posts authored by a specific user. Visibility is automatically enforced 
       "avatarUrl": "http://localhost:8080/uploads/jane.jpg"
     },
     "parentCommentId": null,
-    "content": "This looks incredible! Where was this taken?",
+    "content": "This looks incredible! Where was this taken? 🎉",
+    "mediaUrl": "http://localhost:8080/uploads/stickers/party.gif",
+    "likeCount": 0,
+    "replyCount": 0,
+    "isPinned": false,
+    "pinnedAt": null,
+    "userHasLiked": false,
+    "userReaction": null,
     "createdAt": "2026-09-18T14:40:00Z",
     "updatedAt": "2026-09-18T14:40:00Z"
   }
   ```
 
-#### **12. Get Post Comments**
-* **Endpoint**: `GET /posts/:post_id/comments`
+#### **12. Get Post Top-Level Comments**
+Fetches paginated top-level comments for a post. Pinned comments appear prominently at the top.
+* **Endpoint**: `GET /posts/:post_id/comments?cursor=<uuid>&limit=<number>&sort=<popular|newest|oldest>`
 * **Headers**: `Authorization: Bearer <access_token>`
-* **Response Model** (200 OK): Array of `CommentResponse` objects ordered chronologically.
+* **Query Parameters**:
+  * `cursor` (UUID, optional): Cursor for infinite scrolling.
+  * `limit` (integer, optional, default: 20, max: 50): Number of items per page.
+  * `sort` (string, optional, default: `"popular"`): `"popular"` (most liked), `"newest"` (most recent), or `"oldest"`.
+* **Response Model** (200 OK): Array of `CommentResponse` objects.
 
-#### **13. Delete Comment**
-* **Endpoint**: `DELETE /posts/:post_id/comments/:comment_id`
+#### **13. Get Threaded Replies for a Comment**
+Fetches paginated replies belonging to a specific parent comment, ordered chronologically (earliest to latest).
+* **Endpoints**: 
+  * `GET /posts/:post_id/comments/:comment_id/replies?cursor=<uuid>&limit=<number>`
+  * `GET /comments/:comment_id/replies?cursor=<uuid>&limit=<number>`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK): Array of `CommentResponse` objects.
+
+#### **14. Update Comment**
+Allows the comment author to edit their comment content and media attachment. Dispatches a real-time `comment:updated` WebSocket event.
+* **Endpoints**:
+  * `PUT /posts/:post_id/comments/:comment_id` (or `PATCH`)
+  * `PUT /comments/:comment_id` (or `PATCH`)
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "content": "Updated comment text! ✨",
+    "mediaUrl": null
+  }
+  ```
+* **Response Model** (200 OK): `CommentResponse` object.
+
+#### **15. Delete Comment**
+Deletes a comment. Authorized for the **comment author** OR the **post author** (creator moderation). Deleting a parent comment cascades to all threaded replies and atomically decrements both `comment_count` and parent `reply_count`. Dispatches a real-time `comment:deleted` WebSocket event.
+* **Endpoints**:
+  * `DELETE /posts/:post_id/comments/:comment_id`
+  * `DELETE /comments/:comment_id`
 * **Headers**: `Authorization: Bearer <access_token>`
 * **Response Model** (200 OK):
   ```json
   {
     "success": true,
     "message": "Comment deleted successfully"
+  }
+  ```
+
+#### **16. Add / Update Comment Reaction (Like / Heart)**
+Reactions (likes/hearts) on comments similar to Facebook, Instagram, and TikTok. Dispatches a real-time `comment:reaction` WebSocket event and push notification to the comment author.
+* **Endpoints**:
+  * `POST /posts/:post_id/comments/:comment_id/reactions`
+  * `POST /comments/:comment_id/reactions`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "reaction": "❤️" // Defaults to "like" if omitted; accepts emojis or strings: 'like', '❤️', '🔥', '😂'
+  }
+  ```
+* **Response Model** (200 OK):
+  ```json
+  {
+    "id": "019fd560-1111-7222-9333-aabbccddeeff",
+    "commentId": "019fd540-1234-7589-9807-aabbccddeeff",
+    "user": {
+      "id": "019fa983-9f8c-7fc0-a285-fef0a8b88064",
+      "username": "janedoe",
+      "fullName": "Jane Doe",
+      "avatarUrl": "http://localhost:8080/uploads/jane.jpg"
+    },
+    "reaction": "❤️",
+    "createdAt": "2026-09-18T14:45:00Z"
+  }
+  ```
+
+#### **17. Remove Comment Reaction**
+* **Endpoints**:
+  * `DELETE /posts/:post_id/comments/:comment_id/reactions`
+  * `DELETE /comments/:comment_id/reactions`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Reaction removed successfully"
+  }
+  ```
+
+#### **18. List Comment Reactions**
+* **Endpoints**:
+  * `GET /posts/:post_id/comments/:comment_id/reactions`
+  * `GET /comments/:comment_id/reactions`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK): Array of `CommentReactionResponse` objects.
+
+#### **19. Pin / Unpin Comment (Creator Highlight)**
+Post authors can pin up to 1 top-level comment to feature it prominently at the top of the post (just like on Instagram and TikTok). Dispatches a real-time `comment:pinned` WebSocket event and notifies the comment author.
+* **Endpoints**:
+  * Pin: `POST /posts/:post_id/comments/:comment_id/pin` (or `POST /comments/:comment_id/pin`)
+  * Unpin: `DELETE /posts/:post_id/comments/:comment_id/pin` (or `DELETE /comments/:comment_id/pin`)
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Comment pinned successfully" // or "Comment unpinned successfully"
   }
   ```
 

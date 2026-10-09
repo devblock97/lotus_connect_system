@@ -202,6 +202,23 @@ pub struct CreateCommentRequest {
     #[validate(length(min = 1, message = "Comment content cannot be empty"))]
     pub content: String,
     pub parent_comment_id: Option<Uuid>,
+    pub media_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCommentRequest {
+    #[validate(length(min = 1, message = "Comment content cannot be empty"))]
+    pub content: String,
+    pub media_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentQuery {
+    pub cursor: Option<Uuid>,
+    pub limit: Option<i64>,
+    pub sort: Option<String>, // "newest", "oldest", "popular"
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,9 +229,34 @@ pub struct CommentResponse {
     pub author: PostAuthorResponse,
     pub parent_comment_id: Option<Uuid>,
     pub content: String,
+    pub media_url: Option<String>,
+    pub like_count: i64,
+    pub reply_count: i64,
+    pub is_pinned: bool,
+    pub pinned_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub user_has_liked: bool,
+    pub user_reaction: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct AddCommentReactionRequest {
+    #[validate(length(min = 1, max = 32, message = "Reaction cannot be empty"))]
+    pub reaction: Option<String>, // defaults to "like"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommentReactionResponse {
+    pub id: Uuid,
+    pub comment_id: Uuid,
+    pub user: PostAuthorResponse,
+    pub reaction: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

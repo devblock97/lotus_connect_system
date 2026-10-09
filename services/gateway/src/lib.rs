@@ -175,7 +175,17 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .route("/:post_id", get(handlers::get_post_handler).put(handlers::update_post_handler).patch(handlers::update_post_handler).delete(handlers::delete_post_handler))
         .route("/:post_id/reactions", get(handlers::get_post_reactions_handler).post(handlers::add_post_reaction_handler).delete(handlers::remove_post_reaction_handler))
         .route("/:post_id/comments", get(handlers::get_post_comments_handler).post(handlers::create_comment_handler))
-        .route("/:post_id/comments/:comment_id", delete(handlers::delete_comment_handler))
+        .route("/:post_id/comments/:comment_id", get(handlers::get_comment_handler).put(handlers::update_comment_handler).patch(handlers::update_comment_handler).delete(handlers::delete_comment_handler))
+        .route("/:post_id/comments/:comment_id/replies", get(handlers::get_comment_replies_handler))
+        .route("/:post_id/comments/:comment_id/reactions", get(handlers::get_comment_reactions_handler).post(handlers::add_comment_reaction_handler).delete(handlers::remove_comment_reaction_handler))
+        .route("/:post_id/comments/:comment_id/pin", post(handlers::pin_comment_handler).delete(handlers::unpin_comment_handler))
+        .layer(axum_middleware::from_fn(self::middleware::require_auth));
+
+    let comment_routes = Router::new()
+        .route("/:comment_id", get(handlers::get_direct_comment_handler).put(handlers::update_direct_comment_handler).patch(handlers::update_direct_comment_handler).delete(handlers::delete_direct_comment_handler))
+        .route("/:comment_id/replies", get(handlers::get_direct_comment_replies_handler))
+        .route("/:comment_id/reactions", get(handlers::get_direct_comment_reactions_handler).post(handlers::add_direct_comment_reaction_handler).delete(handlers::remove_direct_comment_reaction_handler))
+        .route("/:comment_id/pin", post(handlers::pin_direct_comment_handler).delete(handlers::unpin_direct_comment_handler))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
     let feed_routes = Router::new()
@@ -210,6 +220,7 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .nest("/uploads", upload_routes.clone())
         .nest("/upload", upload_routes)
         .nest("/posts", post_routes)
+        .nest("/comments", comment_routes)
         .nest("/feed", feed_routes)
         .nest("/stories", story_routes)
         .route("/ws", get(ws::ws_handler));
