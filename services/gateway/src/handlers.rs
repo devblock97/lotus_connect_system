@@ -14,7 +14,8 @@ use dto::{
     AddReactionRequest, MessageReactionResponse,
     UpdateAvatarRequest, AvatarUploadResponse,
     CreatePostRequest, UpdatePostRequest, PostResponse, AddPostReactionRequest,
-    PostReactionDetailResponse, CreateCommentRequest, CommentResponse, FeedQuery,
+    PostReactionDetailResponse, CreateCommentRequest, UpdateCommentRequest,
+    CommentResponse, CommentQuery, AddCommentReactionRequest, CommentReactionResponse, FeedQuery,
     CreateStoryRequest, StoryResponse, StoryTrayItemResponse, StoryViewerResponse,
     AddStoryReactionRequest, StoryReactionResponse, StoryReplyRequest, StoryReplyResponse,
     AddCloseFriendRequest, CloseFriendResponse
@@ -1021,21 +1022,30 @@ pub async fn create_comment_handler(
     Json(payload): Json<CreateCommentRequest>,
 ) -> Result<Json<CommentResponse>> {
     payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let parent_id_opt = payload.parent_comment_id;
     let comment = state.feed_service.add_comment(claims.sub, post_id, payload).await?;
 
-    // Push notification to post author asynchronously
+    // Push notifications & WebSocket dispatch asynchronously
     if let Ok(post) = state.feed_service.get_post(claims.sub, post_id).await {
-        if post.author.id != claims.sub {
-            let sender_name = match state.user_service.get_user_by_id(claims.sub).await {
-                Ok(u) => u.full_name.filter(|n| !n.trim().is_empty()).unwrap_or(u.username),
-                Err(_) => "Someone".to_string(),
-            };
+        let sender_name = match state.user_service.get_user_by_id(claims.sub).await {
+            Ok(u) => u.full_name.filter(|n| !n.trim().is_empty()).unwrap_or(u.username),
+            Err(_) => "Someone".to_string(),
+        };
+
+        let preview = if comment.content.len() > 60 {
+            format!("{}...", &comment.content[..60])
+        } else {
+            comment.content.clone()
+        };
+
+        let ws_manager = state.ws_manager.clone();
+        let notif_service = state.notification_service.clone();
+        let post_author_id = post.author.id;
+        let c_clone = comment.clone();
+
+        // Notify post author
+        if post_author_id != claims.sub {
             let title = "New Comment".to_string();
-            let preview = if comment.content.len() > 60 {
-                format!("{}...", &comment.content[..60])
-            } else {
-                comment.content.clone()
-            };
             let body = format!("{}: {}", sender_name, preview);
             let notif_data = serde_json::json!({
                 "type": "post_comment",
@@ -1043,12 +1053,53 @@ pub async fn create_comment_handler(
                 "commentId": comment.id,
                 "userId": claims.sub,
             });
-            let notif_service = state.notification_service.clone();
-            let author_id = post.author.id;
+            let notif_service_clone = notif_service.clone();
             tokio::spawn(async move {
-                let _ = notif_service.send_notification(author_id, &title, &body, Some(notif_data)).await;
+                let _ = notif_service_clone.send_notification(post_author_id, &title, &body, Some(notif_data)).await;
             });
         }
+
+        // If replying to a comment, notify parent comment author
+        if let Some(parent_id) = parent_id_opt {
+            if let Ok(Some(parent_comment)) = state.feed_service.find_comment_by_id(parent_id).await {
+                let parent_author_id = parent_comment.user_id;
+                if parent_author_id != claims.sub && parent_author_id != post_author_id {
+                    let title = "New Reply".to_string();
+                    let body = format!("{} replied to your comment: {}", sender_name, preview);
+                    let notif_data = serde_json::json!({
+                        "type": "comment_reply",
+                        "postId": post_id,
+                        "commentId": comment.id,
+                        "parentCommentId": parent_id,
+                        "userId": claims.sub,
+                    });
+                    let notif_service_clone = notif_service.clone();
+                    let ws_mgr = ws_manager.clone();
+                    let c_ws = comment.clone();
+                    tokio::spawn(async move {
+                        let _ = notif_service_clone.send_notification(parent_author_id, &title, &body, Some(notif_data)).await;
+                        ws_mgr.send_to_user(parent_author_id, WsMessage {
+                            event: "comment:created".to_string(),
+                            payload: serde_json::json!({
+                                "postId": post_id,
+                                "comment": c_ws,
+                            }),
+                        }).await;
+                    });
+                }
+            }
+        }
+
+        // Realtime WebSocket broadcast to post author
+        tokio::spawn(async move {
+            ws_manager.send_to_user(post_author_id, WsMessage {
+                event: "comment:created".to_string(),
+                payload: serde_json::json!({
+                    "postId": post_id,
+                    "comment": c_clone,
+                }),
+            }).await;
+        });
     }
 
     Ok(Json(comment))
@@ -1058,9 +1109,83 @@ pub async fn get_post_comments_handler(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Path(post_id): Path<Uuid>,
+    Query(query): Query<CommentQuery>,
 ) -> Result<Json<Vec<CommentResponse>>> {
-    let comments = state.feed_service.get_post_comments(claims.sub, post_id).await?;
+    let comments = state.feed_service.get_post_comments(claims.sub, post_id, query).await?;
     Ok(Json(comments))
+}
+
+pub async fn get_comment_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path((_post_id, comment_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<CommentResponse>> {
+    let comment = state.feed_service.get_comment(claims.sub, comment_id).await?;
+    Ok(Json(comment))
+}
+
+pub async fn get_direct_comment_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(comment_id): Path<Uuid>,
+) -> Result<Json<CommentResponse>> {
+    let comment = state.feed_service.get_comment(claims.sub, comment_id).await?;
+    Ok(Json(comment))
+}
+
+pub async fn update_comment_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path((post_id, comment_id)): Path<(Uuid, Uuid)>,
+    Json(payload): Json<UpdateCommentRequest>,
+) -> Result<Json<CommentResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let updated = state.feed_service.update_comment(claims.sub, Some(post_id), comment_id, payload).await?;
+
+    let ws_manager = state.ws_manager.clone();
+    let c_clone = updated.clone();
+    if let Ok(post) = state.feed_service.get_post(claims.sub, post_id).await {
+        let author_id = post.author.id;
+        tokio::spawn(async move {
+            ws_manager.send_to_user(author_id, WsMessage {
+                event: "comment:updated".to_string(),
+                payload: serde_json::json!({
+                    "postId": post_id,
+                    "comment": c_clone,
+                }),
+            }).await;
+        });
+    }
+
+    Ok(Json(updated))
+}
+
+pub async fn update_direct_comment_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(comment_id): Path<Uuid>,
+    Json(payload): Json<UpdateCommentRequest>,
+) -> Result<Json<CommentResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let updated = state.feed_service.update_comment(claims.sub, None, comment_id, payload).await?;
+
+    let ws_manager = state.ws_manager.clone();
+    let c_clone = updated.clone();
+    let post_id = updated.post_id;
+    if let Ok(post) = state.feed_service.get_post(claims.sub, post_id).await {
+        let author_id = post.author.id;
+        tokio::spawn(async move {
+            ws_manager.send_to_user(author_id, WsMessage {
+                event: "comment:updated".to_string(),
+                payload: serde_json::json!({
+                    "postId": post_id,
+                    "comment": c_clone,
+                }),
+            }).await;
+        });
+    }
+
+    Ok(Json(updated))
 }
 
 pub async fn delete_comment_handler(
@@ -1068,10 +1193,330 @@ pub async fn delete_comment_handler(
     Extension(claims): Extension<Claims>,
     Path((post_id, comment_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<GenericResponse>> {
-    state.feed_service.delete_comment(claims.sub, post_id, comment_id).await?;
+    state.feed_service.delete_comment(claims.sub, Some(post_id), comment_id).await?;
+
+    let ws_manager = state.ws_manager.clone();
+    if let Ok(post) = state.feed_service.get_post(claims.sub, post_id).await {
+        let author_id = post.author.id;
+        tokio::spawn(async move {
+            ws_manager.send_to_user(author_id, WsMessage {
+                event: "comment:deleted".to_string(),
+                payload: serde_json::json!({
+                    "postId": post_id,
+                    "commentId": comment_id,
+                }),
+            }).await;
+        });
+    }
+
     Ok(Json(GenericResponse {
         success: true,
         message: "Comment deleted successfully".to_string(),
+    }))
+}
+
+pub async fn delete_direct_comment_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(comment_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    let post_id = state.feed_service.find_comment_by_id(comment_id).await?
+        .map(|c| c.post_id);
+
+    state.feed_service.delete_comment(claims.sub, None, comment_id).await?;
+
+    if let Some(pid) = post_id {
+        let ws_manager = state.ws_manager.clone();
+        if let Ok(post) = state.feed_service.get_post(claims.sub, pid).await {
+            let author_id = post.author.id;
+            tokio::spawn(async move {
+                ws_manager.send_to_user(author_id, WsMessage {
+                    event: "comment:deleted".to_string(),
+                    payload: serde_json::json!({
+                        "postId": pid,
+                        "commentId": comment_id,
+                    }),
+                }).await;
+            });
+        }
+    }
+
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Comment deleted successfully".to_string(),
+    }))
+}
+
+pub async fn get_comment_replies_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path((post_id, comment_id)): Path<(Uuid, Uuid)>,
+    Query(query): Query<CommentQuery>,
+) -> Result<Json<Vec<CommentResponse>>> {
+    let replies = state.feed_service.get_comment_replies(claims.sub, Some(post_id), comment_id, query).await?;
+    Ok(Json(replies))
+}
+
+pub async fn get_direct_comment_replies_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(comment_id): Path<Uuid>,
+    Query(query): Query<CommentQuery>,
+) -> Result<Json<Vec<CommentResponse>>> {
+    let replies = state.feed_service.get_comment_replies(claims.sub, None, comment_id, query).await?;
+    Ok(Json(replies))
+}
+
+pub async fn add_comment_reaction_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path((post_id, comment_id)): Path<(Uuid, Uuid)>,
+    Json(payload): Json<AddCommentReactionRequest>,
+) -> Result<Json<CommentReactionResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let reaction = payload.reaction.unwrap_or_else(|| "like".to_string());
+    let res = state.feed_service.add_comment_reaction(claims.sub, Some(post_id), comment_id, &reaction).await?;
+
+    // Push notification to comment author asynchronously
+    if let Ok(comment) = state.feed_service.get_comment(claims.sub, comment_id).await {
+        if comment.author.id != claims.sub {
+            let sender_name = match state.user_service.get_user_by_id(claims.sub).await {
+                Ok(u) => u.full_name.filter(|n| !n.trim().is_empty()).unwrap_or(u.username),
+                Err(_) => "Someone".to_string(),
+            };
+            let title = "Comment Reaction".to_string();
+            let body = format!("{} reacted {} to your comment", sender_name, reaction);
+            let notif_data = serde_json::json!({
+                "type": "comment_reaction",
+                "postId": post_id,
+                "commentId": comment_id,
+                "reaction": reaction,
+                "userId": claims.sub,
+            });
+            let notif_service = state.notification_service.clone();
+            let ws_manager = state.ws_manager.clone();
+            let comment_author_id = comment.author.id;
+            let res_clone = res.clone();
+            tokio::spawn(async move {
+                let _ = notif_service.send_notification(comment_author_id, &title, &body, Some(notif_data)).await;
+                ws_manager.send_to_user(comment_author_id, WsMessage {
+                    event: "comment:reaction".to_string(),
+                    payload: serde_json::json!({
+                        "postId": post_id,
+                        "commentId": comment_id,
+                        "reaction": res_clone,
+                    }),
+                }).await;
+            });
+        }
+    }
+
+    Ok(Json(res))
+}
+
+pub async fn add_direct_comment_reaction_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(comment_id): Path<Uuid>,
+    Json(payload): Json<AddCommentReactionRequest>,
+) -> Result<Json<CommentReactionResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let reaction = payload.reaction.unwrap_or_else(|| "like".to_string());
+    let res = state.feed_service.add_comment_reaction(claims.sub, None, comment_id, &reaction).await?;
+
+    if let Ok(comment) = state.feed_service.get_comment(claims.sub, comment_id).await {
+        let post_id = comment.post_id;
+        if comment.author.id != claims.sub {
+            let sender_name = match state.user_service.get_user_by_id(claims.sub).await {
+                Ok(u) => u.full_name.filter(|n| !n.trim().is_empty()).unwrap_or(u.username),
+                Err(_) => "Someone".to_string(),
+            };
+            let title = "Comment Reaction".to_string();
+            let body = format!("{} reacted {} to your comment", sender_name, reaction);
+            let notif_data = serde_json::json!({
+                "type": "comment_reaction",
+                "postId": post_id,
+                "commentId": comment_id,
+                "reaction": reaction,
+                "userId": claims.sub,
+            });
+            let notif_service = state.notification_service.clone();
+            let ws_manager = state.ws_manager.clone();
+            let comment_author_id = comment.author.id;
+            let res_clone = res.clone();
+            tokio::spawn(async move {
+                let _ = notif_service.send_notification(comment_author_id, &title, &body, Some(notif_data)).await;
+                ws_manager.send_to_user(comment_author_id, WsMessage {
+                    event: "comment:reaction".to_string(),
+                    payload: serde_json::json!({
+                        "postId": post_id,
+                        "commentId": comment_id,
+                        "reaction": res_clone,
+                    }),
+                }).await;
+            });
+        }
+    }
+
+    Ok(Json(res))
+}
+
+pub async fn remove_comment_reaction_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path((post_id, comment_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<GenericResponse>> {
+    state.feed_service.remove_comment_reaction(claims.sub, Some(post_id), comment_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Reaction removed successfully".to_string(),
+    }))
+}
+
+pub async fn remove_direct_comment_reaction_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(comment_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    state.feed_service.remove_comment_reaction(claims.sub, None, comment_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Reaction removed successfully".to_string(),
+    }))
+}
+
+pub async fn get_comment_reactions_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path((post_id, comment_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<Vec<CommentReactionResponse>>> {
+    let reactions = state.feed_service.get_comment_reactions(claims.sub, Some(post_id), comment_id).await?;
+    Ok(Json(reactions))
+}
+
+pub async fn get_direct_comment_reactions_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(comment_id): Path<Uuid>,
+) -> Result<Json<Vec<CommentReactionResponse>>> {
+    let reactions = state.feed_service.get_comment_reactions(claims.sub, None, comment_id).await?;
+    Ok(Json(reactions))
+}
+
+pub async fn pin_comment_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path((post_id, comment_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<GenericResponse>> {
+    state.feed_service.pin_comment(claims.sub, Some(post_id), comment_id).await?;
+
+    // Push notification to comment author
+    if let Ok(comment) = state.feed_service.get_comment(claims.sub, comment_id).await {
+        if comment.author.id != claims.sub {
+            let title = "Comment Pinned".to_string();
+            let body = "The post author pinned your comment".to_string();
+            let notif_data = serde_json::json!({
+                "type": "comment_pinned",
+                "postId": post_id,
+                "commentId": comment_id,
+            });
+            let notif_service = state.notification_service.clone();
+            let ws_manager = state.ws_manager.clone();
+            let comment_author_id = comment.author.id;
+            tokio::spawn(async move {
+                let _ = notif_service.send_notification(comment_author_id, &title, &body, Some(notif_data)).await;
+                ws_manager.send_to_user(comment_author_id, WsMessage {
+                    event: "comment:pinned".to_string(),
+                    payload: serde_json::json!({
+                        "postId": post_id,
+                        "commentId": comment_id,
+                        "isPinned": true,
+                    }),
+                }).await;
+            });
+        }
+    }
+
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Comment pinned successfully".to_string(),
+    }))
+}
+
+pub async fn pin_direct_comment_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(comment_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    state.feed_service.pin_comment(claims.sub, None, comment_id).await?;
+
+    if let Ok(comment) = state.feed_service.get_comment(claims.sub, comment_id).await {
+        let post_id = comment.post_id;
+        if comment.author.id != claims.sub {
+            let title = "Comment Pinned".to_string();
+            let body = "The post author pinned your comment".to_string();
+            let notif_data = serde_json::json!({
+                "type": "comment_pinned",
+                "postId": post_id,
+                "commentId": comment_id,
+            });
+            let notif_service = state.notification_service.clone();
+            let ws_manager = state.ws_manager.clone();
+            let comment_author_id = comment.author.id;
+            tokio::spawn(async move {
+                let _ = notif_service.send_notification(comment_author_id, &title, &body, Some(notif_data)).await;
+                ws_manager.send_to_user(comment_author_id, WsMessage {
+                    event: "comment:pinned".to_string(),
+                    payload: serde_json::json!({
+                        "postId": post_id,
+                        "commentId": comment_id,
+                        "isPinned": true,
+                    }),
+                }).await;
+            });
+        }
+    }
+
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Comment pinned successfully".to_string(),
+    }))
+}
+
+pub async fn unpin_comment_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path((post_id, comment_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<GenericResponse>> {
+    state.feed_service.unpin_comment(claims.sub, Some(post_id), comment_id).await?;
+
+    let ws_manager = state.ws_manager.clone();
+    tokio::spawn(async move {
+        ws_manager.send_to_user(claims.sub, WsMessage {
+            event: "comment:pinned".to_string(),
+            payload: serde_json::json!({
+                "postId": post_id,
+                "commentId": comment_id,
+                "isPinned": false,
+            }),
+        }).await;
+    });
+
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Comment unpinned successfully".to_string(),
+    }))
+}
+
+pub async fn unpin_direct_comment_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(comment_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    state.feed_service.unpin_comment(claims.sub, None, comment_id).await?;
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Comment unpinned successfully".to_string(),
     }))
 }
 
@@ -1437,14 +1882,35 @@ mod tests {
         let valid_comment = CreateCommentRequest {
             content: "Awesome picture!".to_string(),
             parent_comment_id: None,
+            media_url: None,
         };
         assert!(valid_comment.validate().is_ok());
+
+        let valid_comment_with_media = CreateCommentRequest {
+            content: "Love this sticker!".to_string(),
+            parent_comment_id: None,
+            media_url: Some("http://localhost:8080/uploads/sticker.png".to_string()),
+        };
+        assert!(valid_comment_with_media.validate().is_ok());
 
         let invalid_comment = CreateCommentRequest {
             content: "".to_string(),
             parent_comment_id: None,
+            media_url: None,
         };
         assert!(invalid_comment.validate().is_err());
+
+        let valid_update = UpdateCommentRequest {
+            content: "Updated text".to_string(),
+            media_url: None,
+        };
+        assert!(valid_update.validate().is_ok());
+
+        let invalid_update = UpdateCommentRequest {
+            content: "".to_string(),
+            media_url: None,
+        };
+        assert!(invalid_update.validate().is_err());
     }
 
     #[test]

@@ -214,8 +214,34 @@ pub struct PostComment {
     pub user_id: Uuid,
     pub parent_comment_id: Option<Uuid>,
     pub content: String,
+    pub media_url: Option<String>,
+    pub like_count: i64,
+    pub reply_count: i64,
+    pub is_pinned: bool,
+    pub pinned_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct CommentReaction {
+    pub id: Uuid,
+    pub comment_id: Uuid,
+    pub user_id: Uuid,
+    pub reaction: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct CommentReactionDetail {
+    pub id: Uuid,
+    pub comment_id: Uuid,
+    pub user_id: Uuid,
+    pub username: String,
+    pub full_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub reaction: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -246,9 +272,17 @@ pub struct CommentWithAuthor {
     pub author_avatar_url: Option<String>,
     pub parent_comment_id: Option<Uuid>,
     pub content: String,
+    pub media_url: Option<String>,
+    pub like_count: i64,
+    pub reply_count: i64,
+    pub is_pinned: bool,
+    pub pinned_at: Option<DateTime<Utc>>,
+    pub user_has_liked: bool,
+    pub user_reaction: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
+
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Story {
