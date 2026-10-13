@@ -114,7 +114,21 @@ async fn handle_socket(socket: WebSocket, user_id: Uuid, state: AppState) {
         _ = write_task => {},
     }
 
-    // 6. Cleanup connection
+    // Cleanup connection
+    let left_streams = state.ws_manager.leave_all_livestreams(user_id).await;
+    for stream_id in left_streams {
+        if let Ok(new_count) = state.livestream_service.leave_stream(user_id, stream_id).await {
+            state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+                event: "livestream:viewer_left".to_string(),
+                payload: serde_json::json!({
+                    "streamId": stream_id,
+                    "userId": user_id,
+                    "viewerCount": new_count,
+                }),
+            }).await;
+        }
+    }
+
     state.ws_manager.remove_client(user_id).await;
     if let Err(err) = state.presence_service.set_status(user_id, "offline").await {
         tracing::error!("Failed to set user {} presence to offline: {:?}", user_id, err);
@@ -474,7 +488,7 @@ async fn route_ws_event(
         }
 
         // General WebRTC signaling events (Offer, Answer, IceCandidate, mute/unmute, etc.)
-        event if event.starts_with("signaling:") || event.starts_with("call:") => {
+        event if event.starts_with("signaling:") || event.starts_with("call:") || event.starts_with("livestream:cohost_") => {
             if let Some(recipient_id_str) = msg.payload.get("recipientId").and_then(|v| v.as_str()) {
                 if let Ok(recipient_id) = Uuid::parse_str(recipient_id_str) {
                     let mut payload = msg.payload.clone();
@@ -487,6 +501,124 @@ async fn route_ws_event(
                     }).await;
                 }
             }
+            Ok(())
+        }
+
+        // Live Stream: Join stream room
+        "livestream:join" => {
+            let stream_id_str = msg.payload.get("streamId").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing streamId".to_string()))?;
+            let stream_id = Uuid::parse_str(stream_id_str)
+                .map_err(|_| AppError::Validation("Invalid streamId".to_string()))?;
+
+            let (count, user) = state.livestream_service.join_stream(sender_id, stream_id).await?;
+            state.ws_manager.join_livestream_room(stream_id, sender_id).await;
+
+            state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+                event: "livestream:viewer_joined".to_string(),
+                payload: serde_json::json!({
+                    "streamId": stream_id,
+                    "viewerCount": count,
+                    "user": user,
+                }),
+            }).await;
+
+            Ok(())
+        }
+
+        // Live Stream: Leave stream room
+        "livestream:leave" => {
+            let stream_id_str = msg.payload.get("streamId").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing streamId".to_string()))?;
+            let stream_id = Uuid::parse_str(stream_id_str)
+                .map_err(|_| AppError::Validation("Invalid streamId".to_string()))?;
+
+            let count = state.livestream_service.leave_stream(sender_id, stream_id).await?;
+            state.ws_manager.leave_livestream_room(stream_id, sender_id).await;
+
+            state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+                event: "livestream:viewer_left".to_string(),
+                payload: serde_json::json!({
+                    "streamId": stream_id,
+                    "viewerCount": count,
+                    "userId": sender_id,
+                }),
+            }).await;
+
+            Ok(())
+        }
+
+        // Live Stream: Send real-time live chat comment
+        "livestream:comment" => {
+            let stream_id_str = msg.payload.get("streamId").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing streamId".to_string()))?;
+            let stream_id = Uuid::parse_str(stream_id_str)
+                .map_err(|_| AppError::Validation("Invalid streamId".to_string()))?;
+
+            let content = msg.payload.get("content").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing content".to_string()))?;
+
+            let comment = state.livestream_service.add_comment(
+                sender_id,
+                stream_id,
+                dto::SendLiveCommentRequest { content: content.to_string() },
+            ).await?;
+
+            state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+                event: "livestream:comment".to_string(),
+                payload: serde_json::to_value(&comment).unwrap_or(serde_json::Value::Null),
+            }).await;
+
+            Ok(())
+        }
+
+        // Live Stream: Send floating reactions / likes burst
+        "livestream:reaction" => {
+            let stream_id_str = msg.payload.get("streamId").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing streamId".to_string()))?;
+            let stream_id = Uuid::parse_str(stream_id_str)
+                .map_err(|_| AppError::Validation("Invalid streamId".to_string()))?;
+
+            let reaction = msg.payload.get("reaction").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let count = msg.payload.get("count").and_then(|v| v.as_i64()).map(|c| c as i32);
+
+            let reaction_res = state.livestream_service.add_reaction(
+                sender_id,
+                stream_id,
+                dto::SendLiveReactionRequest { reaction, count },
+            ).await?;
+
+            state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+                event: "livestream:reaction".to_string(),
+                payload: serde_json::to_value(&reaction_res).unwrap_or(serde_json::Value::Null),
+            }).await;
+
+            Ok(())
+        }
+
+        // Live Stream: Send virtual gift / superchat
+        "livestream:gift" => {
+            let stream_id_str = msg.payload.get("streamId").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing streamId".to_string()))?;
+            let stream_id = Uuid::parse_str(stream_id_str)
+                .map_err(|_| AppError::Validation("Invalid streamId".to_string()))?;
+
+            let gift_type = msg.payload.get("giftType").and_then(|v| v.as_str())
+                .ok_or_else(|| AppError::Validation("Missing giftType".to_string()))?;
+
+            let count = msg.payload.get("count").and_then(|v| v.as_i64()).map(|c| c as i32);
+
+            let gift = state.livestream_service.send_gift(
+                sender_id,
+                stream_id,
+                dto::SendLiveGiftRequest { gift_type: gift_type.to_string(), count },
+            ).await?;
+
+            state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+                event: "livestream:gift".to_string(),
+                payload: serde_json::to_value(&gift).unwrap_or(serde_json::Value::Null),
+            }).await;
+
             Ok(())
         }
 

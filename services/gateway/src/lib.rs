@@ -34,6 +34,7 @@ pub struct AppState {
     pub notification_service: Arc<dyn service_notification::NotificationService>,
     pub feed_service: Arc<dyn service_feed::FeedService>,
     pub story_service: Arc<dyn service_story::StoryService>,
+    pub livestream_service: Arc<dyn service_livestream::LiveStreamService>,
     pub ws_manager: ws::manager::WsManager,
 }
 
@@ -70,6 +71,9 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
     let story_repo = Arc::new(service_story::StoryRepositoryImpl::new(pool.clone()));
     let story_service = Arc::new(service_story::StoryServiceImpl::new(story_repo));
 
+    let livestream_repo = Arc::new(service_livestream::LiveStreamRepositoryImpl::new(pool.clone()));
+    let livestream_service = Arc::new(service_livestream::LiveStreamServiceImpl::new(livestream_repo));
+
     let storage_provider = service_upload::create_storage_provider(&config);
 
     let notification_provider: Arc<dyn service_notification::NotificationProvider> =
@@ -101,6 +105,7 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         call_service,
         feed_service,
         story_service,
+        livestream_service,
         storage_provider,
         notification_service,
         ws_manager,
@@ -211,6 +216,28 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .route("/:story_id/reply", post(handlers::reply_to_story_handler))
         .layer(axum_middleware::from_fn(self::middleware::require_auth));
 
+    // Build LiveStreams router (protected by auth)
+    let livestream_routes = Router::new()
+        .route("/", post(handlers::create_livestream_handler).get(handlers::list_livestreams_handler))
+        .route("/me", get(handlers::get_my_livestreams_handler))
+        .route("/user/:user_id", get(handlers::get_user_livestreams_handler))
+        .route("/:stream_id", get(handlers::get_livestream_handler).patch(handlers::update_livestream_handler).put(handlers::update_livestream_handler))
+        .route("/:stream_id/start", post(handlers::start_livestream_handler))
+        .route("/:stream_id/end", post(handlers::end_livestream_handler))
+        .route("/:stream_id/join", post(handlers::join_livestream_handler))
+        .route("/:stream_id/leave", post(handlers::leave_livestream_handler))
+        .route("/:stream_id/viewers", get(handlers::list_livestream_viewers_handler))
+        .route("/:stream_id/comments", get(handlers::list_livestream_comments_handler).post(handlers::send_live_comment_handler))
+        .route("/:stream_id/comments/:comment_id/pin", post(handlers::pin_live_comment_handler).delete(handlers::unpin_live_comment_handler))
+        .route("/:stream_id/reactions", post(handlers::send_live_reaction_handler))
+        .route("/:stream_id/gifts", post(handlers::send_live_gift_handler))
+        .route("/:stream_id/leaderboard", get(handlers::get_livestream_leaderboard_handler))
+        .route("/:stream_id/cohost/request", post(handlers::request_live_cohost_handler))
+        .route("/:stream_id/cohost/respond", post(handlers::respond_live_cohost_handler))
+        .route("/:stream_id/cohost/leave", post(handlers::leave_live_cohost_handler))
+        .route("/:stream_id/cohosts", get(handlers::list_live_cohosts_handler))
+        .layer(axum_middleware::from_fn(self::middleware::require_auth));
+
     // Combine all routers under versioned api prefix
     let api_router = Router::new()
         .nest("/auth", auth_routes)
@@ -223,6 +250,7 @@ pub async fn run_server(config: AppConfig, pool: PgPool) -> Result<()> {
         .nest("/comments", comment_routes)
         .nest("/feed", feed_routes)
         .nest("/stories", story_routes)
+        .nest("/livestreams", livestream_routes)
         .route("/ws", get(ws::ws_handler));
 
     // Base App Router

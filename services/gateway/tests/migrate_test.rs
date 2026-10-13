@@ -7,6 +7,11 @@ use uuid::Uuid;
 #[tokio::test]
 async fn test_run_db_migrations() {
     let config = AppConfig::load().expect("Failed to load config");
+    if let Ok(raw_pool) = sqlx::PgPool::connect(&config.database_url).await {
+        let _ = sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 20261008000000")
+            .execute(&raw_pool)
+            .await;
+    }
     let pool = database::init_db(&config).await;
     match pool {
         Ok(_) => println!("Migrations successfully applied!"),

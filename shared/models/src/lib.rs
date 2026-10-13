@@ -383,7 +383,124 @@ pub struct CloseFriendWithUser {
     pub created_at: DateTime<Utc>,
 }
 
+// ================= LIVE STREAM MODELS =================
 
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct LiveStream {
+    pub id: Uuid,
+    pub host_id: Uuid,
+    pub title: String,
+    pub description: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub status: String, // 'created', 'live', 'ended'
+    pub privacy: String, // 'public', 'friends', 'private'
+    pub stream_key: String,
+    pub ingest_url: Option<String>,
+    pub playback_url: Option<String>,
+    pub channel_id: Option<String>,
+    pub viewer_count: i32,
+    pub peak_viewers: i32,
+    pub total_views: i32,
+    pub like_count: i64,
+    pub pinned_comment_id: Option<Uuid>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub duration_seconds: i32,
+    pub recording_url: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct LiveStreamWithHost {
+    pub id: Uuid,
+    pub host_id: Uuid,
+    pub host_username: String,
+    pub host_full_name: Option<String>,
+    pub host_avatar_url: Option<String>,
+    pub title: String,
+    pub description: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub status: String,
+    pub privacy: String,
+    pub stream_key: String,
+    pub ingest_url: Option<String>,
+    pub playback_url: Option<String>,
+    pub channel_id: Option<String>,
+    pub viewer_count: i32,
+    pub peak_viewers: i32,
+    pub total_views: i32,
+    pub like_count: i64,
+    pub pinned_comment_id: Option<Uuid>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub ended_at: Option<DateTime<Utc>>,
+    pub duration_seconds: i32,
+    pub recording_url: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct LiveStreamViewerWithUser {
+    pub id: Uuid,
+    pub stream_id: Uuid,
+    pub user_id: Uuid,
+    pub username: String,
+    pub full_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub joined_at: DateTime<Utc>,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct LiveStreamCommentWithUser {
+    pub id: Uuid,
+    pub stream_id: Uuid,
+    pub user_id: Uuid,
+    pub username: String,
+    pub full_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub content: String,
+    pub is_pinned: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct LiveStreamGiftWithSender {
+    pub id: Uuid,
+    pub stream_id: Uuid,
+    pub sender_id: Uuid,
+    pub sender_username: String,
+    pub sender_full_name: Option<String>,
+    pub sender_avatar_url: Option<String>,
+    pub gift_type: String,
+    pub gift_count: i32,
+    pub coin_amount: i32,
+    pub combo_count: i32,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct LiveStreamCohostWithUser {
+    pub id: Uuid,
+    pub stream_id: Uuid,
+    pub user_id: Uuid,
+    pub username: String,
+    pub full_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub status: String, // 'pending', 'accepted', 'rejected', 'ended'
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct LiveStreamLeaderboardItem {
+    pub user_id: Uuid,
+    pub username: String,
+    pub full_name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub total_coins: i64,
+    pub gift_count: i64,
+}
 
 #[cfg(test)]
 mod tests {

@@ -78,15 +78,16 @@ async fn test_comment_lifecycle_facebook_tiktok_instagram_style() {
     let post_updated = feed_service.get_post(author_id, post.id).await.expect("Failed to get post");
     assert_eq!(post_updated.comment_count, 1);
 
-    // Post author replies to commenter's comment
+    // Post author replies to commenter's comment with media only (e.g. sticker/GIF)
     let reply_req1 = CreateCommentRequest {
-        content: "Thank you so much! Appreciate the feedback ❤️".to_string(),
+        content: "".to_string(),
         parent_comment_id: Some(c1.id),
-        media_url: None,
+        media_url: Some("https://lotus.local/stickers/heart.gif".to_string()),
     };
     let r1 = feed_service.add_comment(author_id, post.id, reply_req1).await.expect("Failed to add reply");
     assert_eq!(r1.parent_comment_id, Some(c1.id));
     assert_eq!(r1.author.id, author_id);
+    assert_eq!(r1.media_url, Some("https://lotus.local/stickers/heart.gif".to_string()));
 
     // Verify parent comment reply_count incremented to 1
     let c1_refreshed = feed_service.get_comment(commenter_id, c1.id).await.expect("Failed to get comment");

@@ -198,19 +198,35 @@ pub struct PostReactionDetailResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(rename_all = "camelCase")]
+#[validate(schema(function = "validate_create_comment"))]
 pub struct CreateCommentRequest {
-    #[validate(length(min = 1, message = "Comment content cannot be empty"))]
+    #[serde(default)]
     pub content: String,
     pub parent_comment_id: Option<Uuid>,
     pub media_url: Option<String>,
 }
 
+fn validate_create_comment(req: &CreateCommentRequest) -> std::result::Result<(), validator::ValidationError> {
+    if req.content.trim().is_empty() && req.media_url.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+        return Err(validator::ValidationError::new("content_or_media_required"));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(rename_all = "camelCase")]
+#[validate(schema(function = "validate_update_comment"))]
 pub struct UpdateCommentRequest {
-    #[validate(length(min = 1, message = "Comment content cannot be empty"))]
+    #[serde(default)]
     pub content: String,
     pub media_url: Option<String>,
+}
+
+fn validate_update_comment(req: &UpdateCommentRequest) -> std::result::Result<(), validator::ValidationError> {
+    if req.content.trim().is_empty() && req.media_url.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+        return Err(validator::ValidationError::new("content_or_media_required"));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -367,5 +383,174 @@ pub struct CloseFriendResponse {
     pub friend: PostAuthorResponse,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
+
+// ================= LIVE STREAM DTOs =================
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateLiveStreamRequest {
+    #[validate(length(min = 1, max = 255, message = "Title must be between 1 and 255 characters"))]
+    pub title: String,
+    pub description: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub privacy: Option<String>, // 'public', 'friends', 'private' (default: 'public')
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateLiveStreamRequest {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub privacy: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndLiveStreamRequest {
+    pub recording_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveStreamQuery {
+    pub status: Option<String>, // 'live', 'ended', 'all' (default: 'live')
+    pub cursor: Option<Uuid>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveStreamResponse {
+    pub id: Uuid,
+    pub host: PostAuthorResponse,
+    pub title: String,
+    pub description: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub status: String,
+    pub privacy: String,
+    pub playback_url: Option<String>,
+    pub channel_id: Option<String>,
+    pub viewer_count: i32,
+    pub peak_viewers: i32,
+    pub total_views: i32,
+    pub like_count: i64,
+    pub pinned_comment_id: Option<Uuid>,
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub ended_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub duration_seconds: i32,
+    pub recording_url: Option<String>,
+    pub is_host: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveStreamDetailResponse {
+    #[serde(flatten)]
+    pub stream: LiveStreamResponse,
+    /// Stream key and ingest URL are ONLY returned to the stream host
+    pub stream_key: Option<String>,
+    pub ingest_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveStreamViewerResponse {
+    pub id: Uuid,
+    pub user: PostAuthorResponse,
+    pub joined_at: chrono::DateTime<chrono::Utc>,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct SendLiveCommentRequest {
+    #[validate(length(min = 1, max = 500, message = "Comment must be between 1 and 500 characters"))]
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveStreamCommentResponse {
+    pub id: Uuid,
+    pub stream_id: Uuid,
+    pub user: PostAuthorResponse,
+    pub content: String,
+    pub is_pinned: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct SendLiveReactionRequest {
+    pub reaction: Option<String>, // 'heart', 'like', 'fire', 'star' (default: 'heart')
+    pub count: Option<i32>, // burst count (default: 1, max: 20)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveStreamReactionResponse {
+    pub stream_id: Uuid,
+    pub user: PostAuthorResponse,
+    pub reaction: String,
+    pub count: i32,
+    pub total_likes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct SendLiveGiftRequest {
+    #[validate(length(min = 1, max = 64, message = "Gift type must not be empty"))]
+    pub gift_type: String, // 'rose', 'heart', 'diamond', 'coffee', 'firework', 'rocket', 'crown'
+    pub count: Option<i32>, // combo count (default: 1)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveStreamGiftResponse {
+    pub id: Uuid,
+    pub stream_id: Uuid,
+    pub sender: PostAuthorResponse,
+    pub gift_type: String,
+    pub gift_count: i32,
+    pub coin_amount: i32,
+    pub combo_count: i32,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveStreamLeaderboardResponse {
+    pub stream_id: Uuid,
+    pub supporters: Vec<LiveStreamLeaderboardItemResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveStreamLeaderboardItemResponse {
+    pub user: PostAuthorResponse,
+    pub total_coins: i64,
+    pub gift_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct RespondLiveCohostRequest {
+    pub user_id: Uuid,
+    pub action: String, // 'accept', 'reject'
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveStreamCohostResponse {
+    pub id: Uuid,
+    pub stream_id: Uuid,
+    pub user: PostAuthorResponse,
+    pub status: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
 
 
