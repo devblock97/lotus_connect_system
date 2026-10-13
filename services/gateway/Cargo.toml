@@ -33,6 +33,7 @@ service-call = { path = "../call" }
 service-notification = { path = "../notification" }
 service-feed = { path = "../feed" }
 service-story = { path = "../story" }
+service-livestream = { path = "../livestream" }
 chrono = { workspace = true }
 service-upload = { path = "../upload" }
 redis = { workspace = true }

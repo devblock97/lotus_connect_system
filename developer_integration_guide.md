@@ -1144,6 +1144,330 @@ Allows users to maintain their private Close Friends list for restricted story s
 
 ---
 
+### 🔴 Live Streaming (TikTok, YouTube & Facebook Style)
+
+The Live Streaming API powers an interactive broadcasting experience similar to TikTok Live, YouTube Live, and Facebook Watch Live. Features include:
+* **Lifecycle Management**: Stream creation, RTMP/WHIP ingest key generation, Go-Live status transitions, and ending with summary metrics (peak viewers, duration, likes, gifts).
+* **Real-time Live Chat**: Fast live comments with broadcaster comment pinning (SuperChat/highlight style).
+* **Floating Hearts & Likes**: Tap-to-like burst reactions incrementing stream counters in real time.
+* **Virtual Gifts & SuperChats**: Coin-valued animated gifts (Rose, Heart, Diamond, Rocket, Crown) with live supporter leaderboard.
+* **Co-Hosting & Multi-Guest (PK Battles)**: Request and accept co-streaming sessions with low-latency WebRTC interactive tiles.
+
+#### **Live Streaming Flow**
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Host as Streamer
+    actor Viewer as Viewer
+    participant Gateway as API & WebSocket Gateway
+    participant LiveService as LiveStream Service
+
+    Host->>Gateway: POST /livestreams (title, description, cover)
+    Gateway-->>Host: 200 OK (streamKey, ingestUrl, playbackUrl, channelId)
+    Host->>Gateway: POST /livestreams/:id/start
+    Gateway->>Gateway: Broadcast WS "livestream:started" & notify friends
+    Viewer->>Gateway: GET /livestreams?status=live (Explore Feed)
+    Viewer->>Gateway: POST /livestreams/:id/join (or WS "livestream:join")
+    Gateway->>Gateway: Broadcast WS "livestream:viewer_joined" (viewerCount)
+    Viewer->>Gateway: POST /livestreams/:id/comments (or WS "livestream:comment")
+    Gateway->>Gateway: Broadcast WS "livestream:comment" to room
+    Viewer->>Gateway: POST /livestreams/:id/reactions (or WS "livestream:reaction")
+    Gateway->>Gateway: Broadcast WS "livestream:reaction" burst
+    Viewer->>Gateway: POST /livestreams/:id/gifts (or WS "livestream:gift")
+    Gateway->>Gateway: Broadcast WS "livestream:gift" animated banner
+    Host->>Gateway: POST /livestreams/:id/end
+    Gateway->>Gateway: Broadcast WS "livestream:ended" (summary stats)
+```
+
+---
+
+#### **1. Create Live Stream**
+Initializes a new live stream session and generates secure ingest credentials.
+* **Endpoint**: `POST /livestreams`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "title": "Acoustic Night & Q&A 🎸✨",
+    "description": "Playing songs and chatting with viewers!",
+    "thumbnailUrl": "http://localhost:8080/uploads/live-thumb.jpg",
+    "privacy": "public" // 'public', 'friends', 'private'
+  }
+  ```
+* **Response Model** (200 OK):
+  ```json
+  {
+    "id": "019fd810-74a0-7112-9840-001122334455",
+    "host": {
+      "id": "019fa983-9f8c-7fc0-a285-fef0a8b88064",
+      "username": "janedoe",
+      "fullName": "Jane Doe",
+      "avatarUrl": "http://localhost:8080/uploads/jane.jpg"
+    },
+    "title": "Acoustic Night & Q&A 🎸✨",
+    "description": "Playing songs and chatting with viewers!",
+    "thumbnailUrl": "http://localhost:8080/uploads/live-thumb.jpg",
+    "status": "created",
+    "privacy": "public",
+    "playbackUrl": "http://localhost:8080/api/v1/livestreams/019fd810-74a0-7112-9840-001122334455/play.m3u8",
+    "channelId": "live-room-019fd810-74a0-7112-9840-001122334455",
+    "viewerCount": 0,
+    "peakViewers": 0,
+    "totalViews": 0,
+    "likeCount": 0,
+    "pinnedCommentId": null,
+    "startedAt": null,
+    "endedAt": null,
+    "durationSeconds": 0,
+    "recordingUrl": null,
+    "isHost": true,
+    "streamKey": "live_sk_a8f9c1b2d3e4f50123456789", // Secret: only visible to host
+    "ingestUrl": "rtmp://localhost:8080/live/live_sk_a8f9c1b2d3e4f50123456789",
+    "createdAt": "2026-10-10T10:00:00Z",
+    "updatedAt": "2026-10-10T10:00:00Z"
+  }
+  ```
+
+#### **2. Get Live Stream Details**
+Retrieves stream metadata and current stats. Host receives `streamKey` and `ingestUrl`; viewers receive sanitized details.
+* **Endpoint**: `GET /livestreams/:id`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK): Same as `CreateLiveStreamRequest` response model (`streamKey` omitted for non-hosts).
+
+#### **3. Update Live Stream**
+Updates stream title, description, or thumbnail.
+* **Endpoint**: `PATCH /livestreams/:id` *(or `PUT /livestreams/:id`)*
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "title": "Acoustic Night [Requests Open] 🎸✨",
+    "description": "Now taking song requests in chat!"
+  }
+  ```
+* **Response Model** (200 OK): Updated stream object.
+
+#### **4. Start Live Stream (Go Live)**
+Transitions the stream to `"live"`, records `startedAt`, dispatches `livestream:started` WebSocket event, and pushes notifications to followers.
+* **Endpoint**: `POST /livestreams/:id/start`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK): Stream object with `status: "live"`.
+
+#### **5. End Live Stream**
+Concludes the stream, resets active viewers to 0, computes duration, sets `endedAt`, attaches optional recording/VOD URL, and broadcasts summary stats.
+* **Endpoint**: `POST /livestreams/:id/end`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "recordingUrl": "http://localhost:8080/uploads/recordings/live-019fd810.mp4"
+  }
+  ```
+* **Response Model** (200 OK): Stream object with `status: "ended"`.
+
+#### **6. List / Explore Live Streams**
+Fetches active streams for the "Live" discovery feed (TikTok Live tab / YouTube Live feed).
+* **Endpoint**: `GET /livestreams?status=<live|ended|all>&cursor=<uuid>&limit=<number>`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Query Parameters**:
+  * `status` (string, optional, default: `"live"`): `"live"`, `"ended"`, or `"all"`.
+  * `cursor` (UUID, optional): Cursor for pagination.
+  * `limit` (integer, optional, default: 20, max: 50).
+* **Response Model** (200 OK): Array of stream objects.
+
+#### **7. Get My Streams**
+Returns streams created by the authenticated user.
+* **Endpoint**: `GET /livestreams/me?cursor=<uuid>&limit=<number>`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK): Array of stream objects.
+
+#### **8. Join Live Stream Room**
+Registers the user as an active viewer, increments current viewer count, and broadcasts `livestream:viewer_joined`.
+* **Endpoint**: `POST /livestreams/:id/join`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "id": "019fd820-1111-7222-8333-444455556666",
+    "user": {
+      "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+      "username": "alex",
+      "fullName": "Alex Mercer",
+      "avatarUrl": "http://localhost:8080/uploads/alex.jpg"
+    },
+    "joinedAt": "2026-10-10T10:05:00Z",
+    "isActive": true
+  }
+  ```
+
+#### **9. Leave Live Stream Room**
+Deregisters the active viewer, decrements viewer count, and broadcasts `livestream:viewer_left`.
+* **Endpoint**: `POST /livestreams/:id/leave`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Left live stream"
+  }
+  ```
+
+#### **10. List Active Viewers**
+Returns currently active viewers in the stream room.
+* **Endpoint**: `GET /livestreams/:id/viewers?limit=<number>`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK): Array of viewer objects with user avatars.
+
+#### **11. Send Live Comment**
+Sends a real-time live chat message, broadcasting `livestream:comment` to all viewers in the room.
+* **Endpoint**: `POST /livestreams/:id/comments`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "content": "Can you play Wonderwall next? 🎶"
+  }
+  ```
+* **Response Model** (200 OK):
+  ```json
+  {
+    "id": "019fd830-5555-7666-8777-888899990000",
+    "streamId": "019fd810-74a0-7112-9840-001122334455",
+    "user": {
+      "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+      "username": "alex",
+      "fullName": "Alex Mercer",
+      "avatarUrl": "http://localhost:8080/uploads/alex.jpg"
+    },
+    "content": "Can you play Wonderwall next? 🎶",
+    "isPinned": false,
+    "createdAt": "2026-10-10T10:06:00Z"
+  }
+  ```
+
+#### **12. List Live Comments**
+Fetches chronological chat history for the stream.
+* **Endpoint**: `GET /livestreams/:id/comments?cursor=<uuid>&limit=<number>`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK): Array of live comment objects.
+
+#### **13. Pin / Unpin Live Comment**
+Allows the stream host to pin an announcement or highlight message at the top of the chat (TikTok / YouTube SuperChat style).
+* **Pin Endpoint**: `POST /livestreams/:id/comments/:comment_id/pin`
+* **Unpin Endpoint**: `DELETE /livestreams/:id/comments/:comment_id/pin`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "success": true,
+    "message": "Comment pinned successfully"
+  }
+  ```
+
+#### **14. Send Floating Hearts / Burst Reactions**
+Sends rapid tap-to-like reactions, updating total like count and broadcasting floating heart bursts.
+* **Endpoint**: `POST /livestreams/:id/reactions`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Request Model**:
+  ```json
+  {
+    "reaction": "heart", // 'heart', 'like', 'fire', 'star'
+    "count": 10 // Rapid burst tap count (1-50)
+  }
+  ```
+* **Response Model** (200 OK):
+  ```json
+  {
+    "streamId": "019fd810-74a0-7112-9840-001122334455",
+    "user": {
+      "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+      "username": "alex",
+      "fullName": "Alex Mercer",
+      "avatarUrl": "http://localhost:8080/uploads/alex.jpg"
+    },
+    "reaction": "heart",
+    "count": 10,
+    "totalLikes": 150
+  }
+  ```
+
+#### **15. Send Virtual Gift**
+Sends an animated virtual gift to the streamer (TikTok Gifts / Facebook Stars style).
+* **Endpoint**: `POST /livestreams/:id/gifts`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Supported Gift Types**:
+  * `rose` (1 coin)
+  * `heart` (5 coins)
+  * `coffee` (10 coins)
+  * `diamond` (50 coins)
+  * `firework` (100 coins)
+  * `rocket` (500 coins)
+  * `crown` (1000 coins)
+* **Request Model**:
+  ```json
+  {
+    "giftType": "rocket",
+    "count": 1
+  }
+  ```
+* **Response Model** (200 OK):
+  ```json
+  {
+    "id": "019fd840-9999-7000-8111-222233334444",
+    "streamId": "019fd810-74a0-7112-9840-001122334455",
+    "sender": {
+      "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+      "username": "alex",
+      "fullName": "Alex Mercer",
+      "avatarUrl": "http://localhost:8080/uploads/alex.jpg"
+    },
+    "giftType": "rocket",
+    "giftCount": 1,
+    "coinAmount": 500,
+    "comboCount": 1,
+    "createdAt": "2026-10-10T10:08:00Z"
+  }
+  ```
+
+#### **16. Get Top Supporters Leaderboard**
+Returns top contributing gifters during the live stream session.
+* **Endpoint**: `GET /livestreams/:id/leaderboard`
+* **Headers**: `Authorization: Bearer <access_token>`
+* **Response Model** (200 OK):
+  ```json
+  {
+    "streamId": "019fd810-74a0-7112-9840-001122334455",
+    "supporters": [
+      {
+        "user": {
+          "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+          "username": "alex",
+          "fullName": "Alex Mercer",
+          "avatarUrl": "http://localhost:8080/uploads/alex.jpg"
+        },
+        "totalCoins": 500,
+        "giftCount": 1
+      }
+    ]
+  }
+  ```
+
+#### **17. Request & Manage Co-Hosting (PK Battles / Multi-Guest)**
+Allows a viewer to request to join the host as a co-streamer.
+* **Request Co-Host**: `POST /livestreams/:id/cohost/request`
+* **Respond to Request (Host only)**: `POST /livestreams/:id/cohost/respond`
+  ```json
+  {
+    "userId": "019fb231-20c0-7cf1-84d5-dd053a261255",
+    "action": "accept" // 'accept' or 'reject'
+  }
+  ```
+* **Leave Co-Host**: `POST /livestreams/:id/cohost/leave`
+* **List Active Co-Hosts**: `GET /livestreams/:id/cohosts`
+
+---
+
 
 ## 🔌 2. WebSocket Protocol Schema
 
@@ -1349,3 +1673,168 @@ All messages prefixed with `signaling:` are routed directly to the target recipi
   }
 }
 ```
+
+---
+
+### 🔴 Live Stream Real-Time WebSocket Events
+
+Viewers and broadcasters interact in real time within live stream rooms.
+
+#### **1. Join Room (`livestream:join`)**
+Sent by client upon entering a live stream viewing screen.
+```json
+{
+  "event": "livestream:join",
+  "payload": {
+    "streamId": "019fd810-74a0-7112-9840-001122334455"
+  }
+}
+```
+
+#### **2. Leave Room (`livestream:leave`)**
+Sent by client upon exiting a stream.
+```json
+{
+  "event": "livestream:leave",
+  "payload": {
+    "streamId": "019fd810-74a0-7112-9840-001122334455"
+  }
+}
+```
+
+#### **3. Viewer Joined Broadcast (`livestream:viewer_joined`)**
+Broadcast to all viewers in the stream room when a new viewer connects.
+```json
+{
+  "event": "livestream:viewer_joined",
+  "payload": {
+    "streamId": "019fd810-74a0-7112-9840-001122334455",
+    "viewerCount": 42,
+    "user": {
+      "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+      "username": "alex",
+      "fullName": "Alex Mercer",
+      "avatarUrl": "http://localhost:8080/uploads/alex.jpg"
+    }
+  }
+}
+```
+
+#### **4. Viewer Left Broadcast (`livestream:viewer_left`)**
+Broadcast to the room when a viewer departs or disconnects.
+```json
+{
+  "event": "livestream:viewer_left",
+  "payload": {
+    "streamId": "019fd810-74a0-7112-9840-001122334455",
+    "viewerCount": 41,
+    "userId": "019fb231-20c0-7cf1-84d5-dd053a261255"
+  }
+}
+```
+
+#### **5. Real-Time Chat Comment (`livestream:comment`)**
+Sent by viewer or broadcast to room.
+```json
+{
+  "event": "livestream:comment",
+  "payload": {
+    "id": "019fd830-5555-7666-8777-888899990000",
+    "streamId": "019fd810-74a0-7112-9840-001122334455",
+    "user": {
+      "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+      "username": "alex",
+      "fullName": "Alex Mercer",
+      "avatarUrl": "http://localhost:8080/uploads/alex.jpg"
+    },
+    "content": "Awesome stream! 🎶",
+    "isPinned": false,
+    "createdAt": "2026-10-10T10:06:00Z"
+  }
+}
+```
+
+#### **6. Floating Hearts / Reactions Burst (`livestream:reaction`)**
+Rapid tap-to-like burst broadcast.
+```json
+{
+  "event": "livestream:reaction",
+  "payload": {
+    "streamId": "019fd810-74a0-7112-9840-001122334455",
+    "user": {
+      "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+      "username": "alex",
+      "fullName": "Alex Mercer",
+      "avatarUrl": "http://localhost:8080/uploads/alex.jpg"
+    },
+    "reaction": "heart",
+    "count": 5,
+    "totalLikes": 250
+  }
+}
+```
+
+#### **7. Virtual Gift Animation Broadcast (`livestream:gift`)**
+Broadcast across the room when a viewer sends a gift. Triggers full-screen animations / banners.
+```json
+{
+  "event": "livestream:gift",
+  "payload": {
+    "id": "019fd840-9999-7000-8111-222233334444",
+    "streamId": "019fd810-74a0-7112-9840-001122334455",
+    "sender": {
+      "id": "019fb231-20c0-7cf1-84d5-dd053a261255",
+      "username": "alex",
+      "fullName": "Alex Mercer",
+      "avatarUrl": "http://localhost:8080/uploads/alex.jpg"
+    },
+    "giftType": "rocket",
+    "giftCount": 1,
+    "coinAmount": 500,
+    "comboCount": 1,
+    "createdAt": "2026-10-10T10:08:00Z"
+  }
+}
+```
+
+#### **8. Pinned Comment Announcement (`livestream:pinned_comment`)**
+Broadcast to highlight a pinned message on screen.
+```json
+{
+  "event": "livestream:pinned_comment",
+  "payload": {
+    "streamId": "019fd810-74a0-7112-9840-001122334455",
+    "commentId": "019fd830-5555-7666-8777-888899990000"
+  }
+}
+```
+
+#### **9. Co-Host WebRTC Signaling (`livestream:cohost_offer`, `livestream:cohost_answer`, `livestream:cohost_ice`)**
+Direct peer signaling routed between host and co-host for multi-guest interactive video streaming.
+```json
+{
+  "event": "livestream:cohost_offer",
+  "payload": {
+    "recipientId": "019fa983-9f8c-7fc0-a285-fef0a8b88064",
+    "sdp": "v=0\r\no=- ...",
+    "streamId": "019fd810-74a0-7112-9840-001122334455"
+  }
+}
+```
+
+#### **10. Stream Ended Summary Broadcast (`livestream:ended`)**
+Broadcast to all viewers when the host concludes the stream, showing total statistics.
+```json
+{
+  "event": "livestream:ended",
+  "payload": {
+    "streamId": "019fd810-74a0-7112-9840-001122334455",
+    "duration": 3600,
+    "peakViewers": 128,
+    "totalViews": 540,
+    "totalLikes": 3420,
+    "recordingUrl": "http://localhost:8080/uploads/recordings/live-019fd810.mp4"
+  }
+}
+```
+

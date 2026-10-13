@@ -18,7 +18,11 @@ use dto::{
     CommentResponse, CommentQuery, AddCommentReactionRequest, CommentReactionResponse, FeedQuery,
     CreateStoryRequest, StoryResponse, StoryTrayItemResponse, StoryViewerResponse,
     AddStoryReactionRequest, StoryReactionResponse, StoryReplyRequest, StoryReplyResponse,
-    AddCloseFriendRequest, CloseFriendResponse
+    AddCloseFriendRequest, CloseFriendResponse,
+    CreateLiveStreamRequest, UpdateLiveStreamRequest, EndLiveStreamRequest, LiveStreamQuery,
+    LiveStreamResponse, LiveStreamDetailResponse, LiveStreamViewerResponse, SendLiveCommentRequest,
+    LiveStreamCommentResponse, SendLiveReactionRequest, LiveStreamReactionResponse, SendLiveGiftRequest,
+    LiveStreamGiftResponse, LiveStreamLeaderboardResponse, RespondLiveCohostRequest, LiveStreamCohostResponse
 };
 use crate::AppState;
 use crate::ws::types::WsMessage;
@@ -1022,6 +1026,9 @@ pub async fn create_comment_handler(
     Json(payload): Json<CreateCommentRequest>,
 ) -> Result<Json<CommentResponse>> {
     payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    if payload.content.trim().is_empty() && payload.media_url.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+        return Err(AppError::Validation("Comment must have either text content or a media attachment".to_string()));
+    }
     let parent_id_opt = payload.parent_comment_id;
     let comment = state.feed_service.add_comment(claims.sub, post_id, payload).await?;
 
@@ -1032,10 +1039,16 @@ pub async fn create_comment_handler(
             Err(_) => "Someone".to_string(),
         };
 
-        let preview = if comment.content.len() > 60 {
-            format!("{}...", &comment.content[..60])
+        let preview = if !comment.content.trim().is_empty() {
+            if comment.content.len() > 60 {
+                format!("{}...", &comment.content[..60])
+            } else {
+                comment.content.clone()
+            }
+        } else if comment.media_url.is_some() {
+            "Sent an attachment".to_string()
         } else {
-            comment.content.clone()
+            "Commented".to_string()
         };
 
         let ws_manager = state.ws_manager.clone();
@@ -1140,6 +1153,9 @@ pub async fn update_comment_handler(
     Json(payload): Json<UpdateCommentRequest>,
 ) -> Result<Json<CommentResponse>> {
     payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    if payload.content.trim().is_empty() && payload.media_url.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+        return Err(AppError::Validation("Comment must have either text content or a media attachment".to_string()));
+    }
     let updated = state.feed_service.update_comment(claims.sub, Some(post_id), comment_id, payload).await?;
 
     let ws_manager = state.ws_manager.clone();
@@ -1167,6 +1183,9 @@ pub async fn update_direct_comment_handler(
     Json(payload): Json<UpdateCommentRequest>,
 ) -> Result<Json<CommentResponse>> {
     payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    if payload.content.trim().is_empty() && payload.media_url.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+        return Err(AppError::Validation("Comment must have either text content or a media attachment".to_string()));
+    }
     let updated = state.feed_service.update_comment(claims.sub, None, comment_id, payload).await?;
 
     let ws_manager = state.ws_manager.clone();
@@ -1801,6 +1820,374 @@ pub async fn remove_close_friend_handler(
         success: true,
         message: "Close friend removed successfully".to_string(),
     }))
+}
+
+// ================= LIVE STREAM HANDLERS =================
+
+pub async fn create_livestream_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(payload): Json<CreateLiveStreamRequest>,
+) -> Result<Json<LiveStreamDetailResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let base_url = format!("http://{}:{}", state.config.host, state.config.port);
+    let res = state.livestream_service.create_stream(claims.sub, payload, &base_url).await?;
+    Ok(Json(res))
+}
+
+pub async fn get_livestream_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+) -> Result<Json<LiveStreamDetailResponse>> {
+    let res = state.livestream_service.get_stream(claims.sub, stream_id).await?;
+    Ok(Json(res))
+}
+
+pub async fn update_livestream_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+    Json(payload): Json<UpdateLiveStreamRequest>,
+) -> Result<Json<LiveStreamResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let res = state.livestream_service.update_stream(claims.sub, stream_id, payload).await?;
+    Ok(Json(res))
+}
+
+pub async fn start_livestream_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+) -> Result<Json<LiveStreamResponse>> {
+    let stream = state.livestream_service.start_stream(claims.sub, stream_id).await?;
+
+    // Broadcast stream started to room
+    state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+        event: "livestream:started".to_string(),
+        payload: serde_json::to_value(&stream).unwrap_or(serde_json::Value::Null),
+    }).await;
+
+    // Send push notification to host's friends
+    if let Ok(friends) = state.user_service.get_friends_list(claims.sub).await {
+        let notif_service = state.notification_service.clone();
+        let host_name = stream.host.full_name.clone().unwrap_or_else(|| stream.host.username.clone());
+        let stream_title = stream.title.clone();
+        tokio::spawn(async move {
+            for friend in friends {
+                let title = format!("🔴 {} is LIVE now!", host_name);
+                let body = format!("{}: {}", host_name, stream_title);
+                let data = serde_json::json!({
+                    "type": "livestream_started",
+                    "streamId": stream_id,
+                    "hostId": claims.sub,
+                });
+                let _ = notif_service.send_notification(friend.id, &title, &body, Some(data)).await;
+            }
+        });
+    }
+
+    Ok(Json(stream))
+}
+
+pub async fn end_livestream_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+    Json(payload): Json<EndLiveStreamRequest>,
+) -> Result<Json<LiveStreamResponse>> {
+    let stream = state.livestream_service.end_stream(claims.sub, stream_id, payload).await?;
+
+    // Broadcast stream ended to room with summary
+    state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+        event: "livestream:ended".to_string(),
+        payload: serde_json::json!({
+            "streamId": stream_id,
+            "duration": stream.duration_seconds,
+            "peakViewers": stream.peak_viewers,
+            "totalViews": stream.total_views,
+            "totalLikes": stream.like_count,
+            "recordingUrl": stream.recording_url,
+        }),
+    }).await;
+
+    Ok(Json(stream))
+}
+
+pub async fn list_livestreams_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Query(query): Query<LiveStreamQuery>,
+) -> Result<Json<Vec<LiveStreamResponse>>> {
+    let streams = state.livestream_service.list_streams(claims.sub, query).await?;
+    Ok(Json(streams))
+}
+
+pub async fn get_my_livestreams_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Query(query): Query<LiveStreamQuery>,
+) -> Result<Json<Vec<LiveStreamResponse>>> {
+    let streams = state.livestream_service.list_user_streams(claims.sub, claims.sub, query.cursor, query.limit).await?;
+    Ok(Json(streams))
+}
+
+pub async fn get_user_livestreams_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(user_id): Path<Uuid>,
+    Query(query): Query<LiveStreamQuery>,
+) -> Result<Json<Vec<LiveStreamResponse>>> {
+    let streams = state.livestream_service.list_user_streams(claims.sub, user_id, query.cursor, query.limit).await?;
+    Ok(Json(streams))
+}
+
+pub async fn join_livestream_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+) -> Result<Json<LiveStreamViewerResponse>> {
+    let (count, user) = state.livestream_service.join_stream(claims.sub, stream_id).await?;
+    state.ws_manager.join_livestream_room(stream_id, claims.sub).await;
+
+    // Broadcast viewer joined to all participants in stream
+    state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+        event: "livestream:viewer_joined".to_string(),
+        payload: serde_json::json!({
+            "streamId": stream_id,
+            "viewerCount": count,
+            "user": user,
+        }),
+    }).await;
+
+    Ok(Json(LiveStreamViewerResponse {
+        id: Uuid::now_v7(),
+        user,
+        joined_at: chrono::Utc::now(),
+        is_active: true,
+    }))
+}
+
+pub async fn leave_livestream_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    let count = state.livestream_service.leave_stream(claims.sub, stream_id).await?;
+    state.ws_manager.leave_livestream_room(stream_id, claims.sub).await;
+
+    // Broadcast viewer left to all participants in stream
+    state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+        event: "livestream:viewer_left".to_string(),
+        payload: serde_json::json!({
+            "streamId": stream_id,
+            "viewerCount": count,
+            "userId": claims.sub,
+        }),
+    }).await;
+
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Left live stream".to_string(),
+    }))
+}
+
+pub async fn list_livestream_viewers_handler(
+    State(state): State<AppState>,
+    Extension(_claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+    Query(query): Query<LiveStreamQuery>,
+) -> Result<Json<Vec<LiveStreamViewerResponse>>> {
+    let viewers = state.livestream_service.list_viewers(stream_id, query.limit).await?;
+    Ok(Json(viewers))
+}
+
+pub async fn send_live_comment_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+    Json(payload): Json<SendLiveCommentRequest>,
+) -> Result<Json<LiveStreamCommentResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let comment = state.livestream_service.add_comment(claims.sub, stream_id, payload).await?;
+
+    // Broadcast comment in real-time across the live stream room
+    state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+        event: "livestream:comment".to_string(),
+        payload: serde_json::to_value(&comment).unwrap_or(serde_json::Value::Null),
+    }).await;
+
+    Ok(Json(comment))
+}
+
+pub async fn list_livestream_comments_handler(
+    State(state): State<AppState>,
+    Extension(_claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+    Query(query): Query<LiveStreamQuery>,
+) -> Result<Json<Vec<LiveStreamCommentResponse>>> {
+    let comments = state.livestream_service.list_comments(stream_id, query.cursor, query.limit).await?;
+    Ok(Json(comments))
+}
+
+pub async fn pin_live_comment_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path((stream_id, comment_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<GenericResponse>> {
+    state.livestream_service.pin_comment(claims.sub, stream_id, comment_id).await?;
+
+    // Broadcast pinned comment in room
+    state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+        event: "livestream:pinned_comment".to_string(),
+        payload: serde_json::json!({
+            "streamId": stream_id,
+            "commentId": comment_id,
+        }),
+    }).await;
+
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Comment pinned successfully".to_string(),
+    }))
+}
+
+pub async fn unpin_live_comment_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    state.livestream_service.unpin_comment(claims.sub, stream_id).await?;
+
+    // Broadcast unpinned comment in room
+    state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+        event: "livestream:unpinned_comment".to_string(),
+        payload: serde_json::json!({
+            "streamId": stream_id,
+        }),
+    }).await;
+
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Comment unpinned successfully".to_string(),
+    }))
+}
+
+pub async fn send_live_reaction_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+    Json(payload): Json<SendLiveReactionRequest>,
+) -> Result<Json<LiveStreamReactionResponse>> {
+    let reaction = state.livestream_service.add_reaction(claims.sub, stream_id, payload).await?;
+
+    // Broadcast reaction burst in room
+    state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+        event: "livestream:reaction".to_string(),
+        payload: serde_json::to_value(&reaction).unwrap_or(serde_json::Value::Null),
+    }).await;
+
+    Ok(Json(reaction))
+}
+
+pub async fn send_live_gift_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+    Json(payload): Json<SendLiveGiftRequest>,
+) -> Result<Json<LiveStreamGiftResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let gift = state.livestream_service.send_gift(claims.sub, stream_id, payload).await?;
+
+    // Broadcast animated gift across the room
+    state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+        event: "livestream:gift".to_string(),
+        payload: serde_json::to_value(&gift).unwrap_or(serde_json::Value::Null),
+    }).await;
+
+    Ok(Json(gift))
+}
+
+pub async fn get_livestream_leaderboard_handler(
+    State(state): State<AppState>,
+    Extension(_claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+) -> Result<Json<LiveStreamLeaderboardResponse>> {
+    let leaderboard = state.livestream_service.get_leaderboard(stream_id).await?;
+    Ok(Json(leaderboard))
+}
+
+pub async fn request_live_cohost_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+) -> Result<Json<LiveStreamCohostResponse>> {
+    let cohost = state.livestream_service.request_cohost(claims.sub, stream_id).await?;
+
+    // Notify stream host of co-host join request
+    if let Ok(stream) = state.livestream_service.get_stream(claims.sub, stream_id).await {
+        state.ws_manager.send_to_user(stream.stream.host.id, WsMessage {
+            event: "livestream:cohost_request".to_string(),
+            payload: serde_json::to_value(&cohost).unwrap_or(serde_json::Value::Null),
+        }).await;
+    }
+
+    Ok(Json(cohost))
+}
+
+pub async fn respond_live_cohost_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+    Json(payload): Json<RespondLiveCohostRequest>,
+) -> Result<Json<LiveStreamCohostResponse>> {
+    payload.validate().map_err(|err| AppError::Validation(err.to_string()))?;
+    let target_user_id = payload.user_id;
+    let cohost = state.livestream_service.respond_cohost(claims.sub, stream_id, payload).await?;
+
+    // Broadcast cohost status change in room
+    state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+        event: "livestream:cohost_status".to_string(),
+        payload: serde_json::to_value(&cohost).unwrap_or(serde_json::Value::Null),
+    }).await;
+
+    // Send direct event to candidate user
+    state.ws_manager.send_to_user(target_user_id, WsMessage {
+        event: "livestream:cohost_response".to_string(),
+        payload: serde_json::to_value(&cohost).unwrap_or(serde_json::Value::Null),
+    }).await;
+
+    Ok(Json(cohost))
+}
+
+pub async fn leave_live_cohost_handler(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+) -> Result<Json<GenericResponse>> {
+    state.livestream_service.leave_cohost(claims.sub, stream_id).await?;
+
+    state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+        event: "livestream:cohost_left".to_string(),
+        payload: serde_json::json!({
+            "streamId": stream_id,
+            "userId": claims.sub,
+        }),
+    }).await;
+
+    Ok(Json(GenericResponse {
+        success: true,
+        message: "Left co-host session".to_string(),
+    }))
+}
+
+pub async fn list_live_cohosts_handler(
+    State(state): State<AppState>,
+    Extension(_claims): Extension<Claims>,
+    Path(stream_id): Path<Uuid>,
+) -> Result<Json<Vec<LiveStreamCohostResponse>>> {
+    let list = state.livestream_service.list_cohosts(stream_id).await?;
+    Ok(Json(list))
 }
 
 #[cfg(test)]
