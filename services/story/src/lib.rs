@@ -16,7 +16,7 @@ pub trait StoryRepository: Send + Sync {
         id: Uuid,
         author_id: Uuid,
         media_type: &str,
-        media_url: &str,
+        media_url: Option<&str>,
         thumbnail_url: Option<&str>,
         caption: Option<&str>,
         duration: f64,
@@ -89,7 +89,7 @@ impl StoryRepository for StoryRepositoryImpl {
         id: Uuid,
         author_id: Uuid,
         media_type: &str,
-        media_url: &str,
+        media_url: Option<&str>,
         thumbnail_url: Option<&str>,
         caption: Option<&str>,
         duration: f64,
@@ -594,7 +594,28 @@ impl StoryServiceImpl {
 impl StoryService for StoryServiceImpl {
     async fn create_story(&self, author_id: Uuid, req: CreateStoryRequest) -> Result<StoryResponse> {
         let story_id = Uuid::now_v7();
-        let media_type = req.media_type.unwrap_or_else(|| "image".to_string());
+        let media_type = req.media_type.unwrap_or_else(|| {
+            if req.media_url.is_none() {
+                "text".to_string()
+            } else {
+                "image".to_string()
+            }
+        });
+
+        // Validate content based on media type
+        if media_type == "text" {
+            let has_content = req.caption.as_ref().map(|c| !c.trim().is_empty()).unwrap_or(false)
+                || req.background_color.as_ref().map(|b| !b.trim().is_empty()).unwrap_or(false);
+            if !has_content {
+                return Err(AppError::Validation("Text story must contain text content (caption) or a background color".to_string()));
+            }
+        } else {
+            let has_media_url = req.media_url.as_ref().map(|u| !u.trim().is_empty()).unwrap_or(false);
+            if !has_media_url {
+                return Err(AppError::Validation(format!("Media URL is required for {} stories", media_type)));
+            }
+        }
+
         let duration = req.duration.unwrap_or(5.0);
         let visibility = req.visibility.unwrap_or_else(|| "friends".to_string());
         let metadata_json = req.metadata.map(sqlx::types::Json);
@@ -604,7 +625,7 @@ impl StoryService for StoryServiceImpl {
             story_id,
             author_id,
             &media_type,
-            &req.media_url,
+            req.media_url.as_deref(),
             req.thumbnail_url.as_deref(),
             req.caption.as_deref(),
             duration,
@@ -935,7 +956,7 @@ mod tests {
             id: Uuid,
             author_id: Uuid,
             media_type: &str,
-            media_url: &str,
+            media_url: Option<&str>,
             thumbnail_url: Option<&str>,
             caption: Option<&str>,
             duration: f64,
@@ -948,7 +969,7 @@ mod tests {
                 id,
                 author_id,
                 media_type: media_type.to_string(),
-                media_url: media_url.to_string(),
+                media_url: media_url.map(|s| s.to_string()),
                 thumbnail_url: thumbnail_url.map(|s| s.to_string()),
                 caption: caption.map(|s| s.to_string()),
                 duration,
@@ -958,6 +979,27 @@ mod tests {
                 created_at: Utc::now(),
                 expires_at,
             };
+            self.stories.lock().unwrap().push(StoryWithAuthor {
+                id: story.id,
+                author_id: story.author_id,
+                author_username: "user".to_string(),
+                author_full_name: None,
+                author_avatar_url: None,
+                media_type: story.media_type.clone(),
+                media_url: story.media_url.clone(),
+                thumbnail_url: story.thumbnail_url.clone(),
+                caption: story.caption.clone(),
+                duration: story.duration,
+                visibility: story.visibility.clone(),
+                background_color: story.background_color.clone(),
+                metadata: story.metadata.clone(),
+                created_at: story.created_at,
+                expires_at: story.expires_at,
+                view_count: 0,
+                has_viewed: false,
+                viewer_reaction: None,
+                is_close_friend: false,
+            });
             Ok(story)
         }
 
@@ -1124,7 +1166,7 @@ mod tests {
             author_full_name: None,
             author_avatar_url: None,
             media_type: "image".to_string(),
-            media_url: "url0".to_string(),
+            media_url: Some("url0".to_string()),
             thumbnail_url: None,
             caption: None,
             duration: 5.0,
@@ -1147,7 +1189,7 @@ mod tests {
             author_full_name: None,
             author_avatar_url: None,
             media_type: "image".to_string(),
-            media_url: "url1".to_string(),
+            media_url: Some("url1".to_string()),
             thumbnail_url: None,
             caption: None,
             duration: 5.0,
@@ -1170,7 +1212,7 @@ mod tests {
             author_full_name: None,
             author_avatar_url: None,
             media_type: "video".to_string(),
-            media_url: "url2".to_string(),
+            media_url: Some("url2".to_string()),
             thumbnail_url: None,
             caption: Some("Secret story".to_string()),
             duration: 15.0,
@@ -1221,7 +1263,7 @@ mod tests {
             author_full_name: None,
             author_avatar_url: None,
             media_type: "image".to_string(),
-            media_url: "url".to_string(),
+            media_url: Some("url".to_string()),
             thumbnail_url: None,
             caption: None,
             duration: 5.0,
@@ -1268,7 +1310,7 @@ mod tests {
             author_full_name: None,
             author_avatar_url: None,
             media_type: "image".to_string(),
-            media_url: "url".to_string(),
+            media_url: Some("url".to_string()),
             thumbnail_url: None,
             caption: None,
             duration: 5.0,
@@ -1294,6 +1336,75 @@ mod tests {
         let _ = service.mark_story_viewed(viewer_id, story_id).await;
         assert_eq!(repo.recorded_views.lock().unwrap().len(), 1);
         assert_eq!(repo.recorded_views.lock().unwrap()[0], (story_id, viewer_id));
+    }
+
+    #[tokio::test]
+    async fn test_create_text_only_story_with_null_media_url() {
+        let repo = Arc::new(MockStoryRepository::new());
+        let service = StoryServiceImpl::new(repo);
+        let author_id = Uuid::now_v7();
+
+        let req = CreateStoryRequest {
+            media_type: Some("text".to_string()),
+            media_url: None,
+            thumbnail_url: None,
+            caption: Some("Just chilling with tea 🍵".to_string()),
+            duration: Some(5.0),
+            visibility: Some("friends".to_string()),
+            background_color: Some("#4F46E5".to_string()),
+            metadata: None,
+        };
+
+        let result = service.create_story(author_id, req).await;
+        assert!(result.is_ok(), "Failed to create text-only story: {:?}", result.err());
+
+        let story = result.unwrap();
+        assert_eq!(story.media_type, "text");
+        assert_eq!(story.media_url, None);
+        assert_eq!(story.caption, Some("Just chilling with tea 🍵".to_string()));
+        assert_eq!(story.background_color, Some("#4F46E5".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_create_image_story_without_media_url_fails() {
+        let repo = Arc::new(MockStoryRepository::new());
+        let service = StoryServiceImpl::new(repo);
+        let author_id = Uuid::now_v7();
+
+        let req = CreateStoryRequest {
+            media_type: Some("image".to_string()),
+            media_url: None,
+            thumbnail_url: None,
+            caption: Some("No photo url provided".to_string()),
+            duration: None,
+            visibility: None,
+            background_color: None,
+            metadata: None,
+        };
+
+        let result = service.create_story(author_id, req).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_text_story_without_content_fails() {
+        let repo = Arc::new(MockStoryRepository::new());
+        let service = StoryServiceImpl::new(repo);
+        let author_id = Uuid::now_v7();
+
+        let req = CreateStoryRequest {
+            media_type: Some("text".to_string()),
+            media_url: None,
+            thumbnail_url: None,
+            caption: None,
+            duration: None,
+            visibility: None,
+            background_color: None,
+            metadata: None,
+        };
+
+        let result = service.create_story(author_id, req).await;
+        assert!(result.is_err());
     }
 }
 

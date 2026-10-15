@@ -832,13 +832,13 @@ Publishes an image, video, or text story expiring automatically in 24 hours.
 * **Request Model**:
   ```json
   {
-    "mediaType": "image", // 'image', 'video', or 'text' (default: 'image')
-    "mediaUrl": "http://localhost:8080/uploads/019fd520-a75b-story.jpg",
+    "mediaType": "image", // 'image', 'video', or 'text' (default: 'image' if mediaUrl provided, 'text' if omitted)
+    "mediaUrl": "http://localhost:8080/uploads/019fd520-a75b-story.jpg", // optional/nullable for text stories; required for image/video
     "thumbnailUrl": "http://localhost:8080/uploads/019fd520-thumb.jpg", // optional (for video)
-    "caption": "Sunset golden hour at the beach! 🌅✨", // optional
-    "duration": 5.0, // seconds to display (default: 5.0 for photos, up to 60.0 for videos)
+    "caption": "Sunset golden hour at the beach! 🌅✨", // optional (required or backgroundColor for text stories)
+    "duration": 5.0, // seconds to display (default: 5.0 for photos/text, up to 60.0 for videos)
     "visibility": "friends", // 'public', 'friends' (all accepted friends), or 'close_friends' (only friends in Close Friends list)
-    "backgroundColor": "#1A1A24", // optional background color / gradient hex code
+    "backgroundColor": "#1A1A24", // optional background color / gradient hex code (ideal for text stories)
     "metadata": { // optional rich metadata for stickers, tags, coordinates
       "stickers": [
         { "type": "location", "name": "Da Nang, Vietnam", "lat": 16.0544, "lng": 108.2022 },
