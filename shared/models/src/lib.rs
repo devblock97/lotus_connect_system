@@ -289,7 +289,7 @@ pub struct Story {
     pub id: Uuid,
     pub author_id: Uuid,
     pub media_type: String, // 'image', 'video', 'text'
-    pub media_url: String,
+    pub media_url: Option<String>,
     pub thumbnail_url: Option<String>,
     pub caption: Option<String>,
     pub duration: f64,
@@ -308,7 +308,7 @@ pub struct StoryWithAuthor {
     pub author_full_name: Option<String>,
     pub author_avatar_url: Option<String>,
     pub media_type: String,
-    pub media_url: String,
+    pub media_url: Option<String>,
     pub thumbnail_url: Option<String>,
     pub caption: Option<String>,
     pub duration: f64,

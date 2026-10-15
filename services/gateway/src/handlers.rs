@@ -1735,11 +1735,11 @@ pub async fn reply_to_story_handler(
         content: Some(formatted_content),
         message_type: Some("text".to_string()),
         reply_to_id: None,
-        media_url: Some(story.media_url.clone()),
+        media_url: story.media_url.clone(),
         thumbnail_url: story.thumbnail_url.clone(),
         file_name: None,
         file_size: None,
-        mime_type: Some(match story.media_type.as_str() {
+        mime_type: story.media_url.as_ref().map(|_| match story.media_type.as_str() {
             "video" => "video/mp4".to_string(),
             _ => "image/jpeg".to_string(),
         }),
@@ -2320,7 +2320,7 @@ mod tests {
     fn test_create_story_request_validation() {
         let valid_story = CreateStoryRequest {
             media_type: Some("image".to_string()),
-            media_url: "http://localhost:8080/uploads/story1.jpg".to_string(),
+            media_url: Some("http://localhost:8080/uploads/story1.jpg".to_string()),
             thumbnail_url: None,
             caption: Some("Enjoying sunset! 🌅".to_string()),
             duration: Some(5.0),
@@ -2332,9 +2332,21 @@ mod tests {
         };
         assert!(valid_story.validate().is_ok());
 
+        let valid_text_story = CreateStoryRequest {
+            media_type: Some("text".to_string()),
+            media_url: None,
+            thumbnail_url: None,
+            caption: Some("Just chilling with tea 🍵".to_string()),
+            duration: Some(5.0),
+            visibility: Some("friends".to_string()),
+            background_color: Some("#4F46E5".to_string()),
+            metadata: None,
+        };
+        assert!(valid_text_story.validate().is_ok());
+
         let invalid_story = CreateStoryRequest {
             media_type: None,
-            media_url: "".to_string(),
+            media_url: Some("".to_string()),
             thumbnail_url: None,
             caption: None,
             duration: None,
@@ -2389,7 +2401,7 @@ mod tests {
                 avatar_url: Some("http://localhost:8080/uploads/alex.jpg".to_string()),
             },
             media_type: "image".to_string(),
-            media_url: "http://localhost:8080/uploads/story.jpg".to_string(),
+            media_url: Some("http://localhost:8080/uploads/story.jpg".to_string()),
             thumbnail_url: None,
             caption: Some("Hello World".to_string()),
             duration: 5.0,

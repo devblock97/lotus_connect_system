@@ -286,7 +286,7 @@ pub struct FeedQuery {
 pub struct CreateStoryRequest {
     pub media_type: Option<String>, // 'image', 'video', 'text' (default: 'image')
     #[validate(length(min = 1, message = "Media URL must not be empty"))]
-    pub media_url: String,
+    pub media_url: Option<String>,
     pub thumbnail_url: Option<String>,
     pub caption: Option<String>,
     pub duration: Option<f64>, // defaults to 5.0
@@ -301,7 +301,7 @@ pub struct StoryResponse {
     pub id: Uuid,
     pub author: PostAuthorResponse,
     pub media_type: String,
-    pub media_url: String,
+    pub media_url: Option<String>,
     pub thumbnail_url: Option<String>,
     pub caption: Option<String>,
     pub duration: f64,
