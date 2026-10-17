@@ -8,7 +8,7 @@ use crate::ws::types::WsMessage;
 
 #[derive(Clone)]
 pub struct WsManager {
-    clients: Arc<RwLock<HashMap<Uuid, mpsc::UnboundedSender<Message>>>>,
+    clients: Arc<RwLock<HashMap<Uuid, HashMap<Uuid, mpsc::UnboundedSender<Message>>>>>,
     active_conversations: Arc<RwLock<HashMap<Uuid, Uuid>>>,
     livestream_rooms: Arc<RwLock<HashMap<Uuid, HashSet<Uuid>>>>,
     user_livestreams: Arc<RwLock<HashMap<Uuid, HashSet<Uuid>>>>,
@@ -24,25 +24,35 @@ impl WsManager {
         }
     }
 
-    /// Add a new client connection sender
-    pub async fn add_client(&self, user_id: Uuid, tx: mpsc::UnboundedSender<Message>) {
+    /// Add a new client connection sender by User ID and Connection ID
+    pub async fn add_client(&self, user_id: Uuid, conn_id: Uuid, tx: mpsc::UnboundedSender<Message>) {
         let mut clients = self.clients.write().await;
-        clients.insert(user_id, tx);
-        tracing::info!("User {} connected to WebSocket. Active connections: {}", user_id, clients.len());
+        clients.entry(user_id).or_default().insert(conn_id, tx);
+        let total_conns: usize = clients.values().map(|c| c.len()).sum();
+        tracing::info!("User {} connected to WebSocket (conn {}). Active users: {}, total conns: {}", user_id, conn_id, clients.len(), total_conns);
     }
 
-    /// Remove a client connection by User ID
-    pub async fn remove_client(&self, user_id: Uuid) {
-        let mut clients = self.clients.write().await;
-        clients.remove(&user_id);
+    /// Remove a client connection by User ID and Connection ID
+    pub async fn remove_client(&self, user_id: Uuid, conn_id: Uuid) {
+        let mut should_cleanup = false;
+        {
+            let mut clients = self.clients.write().await;
+            if let Some(user_conns) = clients.get_mut(&user_id) {
+                user_conns.remove(&conn_id);
+                if user_conns.is_empty() {
+                    clients.remove(&user_id);
+                    should_cleanup = true;
+                }
+            }
+            let total_conns: usize = clients.values().map(|c| c.len()).sum();
+            tracing::info!("User {} disconnected from WebSocket (conn {}). Active users: {}, total conns: {}", user_id, conn_id, clients.len(), total_conns);
+        }
 
-        let mut active = self.active_conversations.write().await;
-        active.remove(&user_id);
-
-        // Also clean up any livestream room memberships
-        self.leave_all_livestreams(user_id).await;
-
-        tracing::info!("User {} disconnected from WebSocket. Active connections: {}", user_id, clients.len());
+        if should_cleanup {
+            let mut active = self.active_conversations.write().await;
+            active.remove(&user_id);
+            self.leave_all_livestreams(user_id).await;
+        }
     }
 
     /// Set the active conversation for a user
@@ -67,12 +77,26 @@ impl WsManager {
 
     /// Send a message directly to a single online user
     pub async fn send_to_user(&self, user_id: Uuid, msg: WsMessage) -> bool {
+        self.send_to_user_except(user_id, None, msg).await
+    }
+
+    /// Send a message directly to a user, optionally excluding a specific connection (e.g. sender's own device)
+    pub async fn send_to_user_except(&self, user_id: Uuid, exclude_conn_id: Option<Uuid>, msg: WsMessage) -> bool {
         let clients = self.clients.read().await;
-        if let Some(tx) = clients.get(&user_id) {
+        if let Some(user_conns) = clients.get(&user_id) {
             if let Ok(json_str) = serde_json::to_string(&msg) {
-                if tx.send(Message::Text(json_str.into())).is_ok() {
-                    return true;
+                let mut sent = false;
+                for (cid, tx) in user_conns {
+                    if let Some(exclude) = exclude_conn_id {
+                        if *cid == exclude {
+                            continue;
+                        }
+                    }
+                    if tx.send(Message::Text(json_str.clone().into())).is_ok() {
+                        sent = true;
+                    }
                 }
+                return sent;
             }
         }
         false
@@ -81,7 +105,7 @@ impl WsManager {
     /// Check if a user is currently connected to WebSocket
     pub async fn is_connected(&self, user_id: Uuid) -> bool {
         let clients = self.clients.read().await;
-        clients.contains_key(&user_id)
+        clients.get(&user_id).map(|c| !c.is_empty()).unwrap_or(false)
     }
 
     /// Broadcast a message to a list of user IDs (e.g. members of a conversation)
@@ -89,8 +113,10 @@ impl WsManager {
         let clients = self.clients.read().await;
         if let Ok(json_str) = serde_json::to_string(&msg) {
             for user_id in user_ids {
-                if let Some(tx) = clients.get(user_id) {
-                    let _ = tx.send(Message::Text(json_str.clone().into()));
+                if let Some(user_conns) = clients.get(user_id) {
+                    for tx in user_conns.values() {
+                        let _ = tx.send(Message::Text(json_str.clone().into()));
+                    }
                 }
             }
         }
@@ -157,8 +183,10 @@ impl WsManager {
         let clients = self.clients.read().await;
         if let Ok(json_str) = serde_json::to_string(&msg) {
             for viewer_id in viewers {
-                if let Some(tx) = clients.get(&viewer_id) {
-                    let _ = tx.send(Message::Text(json_str.clone().into()));
+                if let Some(user_conns) = clients.get(&viewer_id) {
+                    for tx in user_conns.values() {
+                        let _ = tx.send(Message::Text(json_str.clone().into()));
+                    }
                 }
             }
         }
@@ -169,5 +197,16 @@ impl WsManager {
         let rooms = self.livestream_rooms.read().await;
         rooms.get(&stream_id).map(|v| v.iter().copied().collect()).unwrap_or_default()
     }
-}
 
+    /// Broadcast a message to all connected clients
+    pub async fn broadcast_all(&self, msg: WsMessage) {
+        let clients = self.clients.read().await;
+        if let Ok(json_str) = serde_json::to_string(&msg) {
+            for user_conns in clients.values() {
+                for tx in user_conns.values() {
+                    let _ = tx.send(Message::Text(json_str.clone().into()));
+                }
+            }
+        }
+    }
+}

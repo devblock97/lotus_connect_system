@@ -44,9 +44,10 @@ pub async fn ws_handler(
 async fn handle_socket(socket: WebSocket, user_id: Uuid, state: AppState) {
     let (mut ws_sender, mut ws_receiver) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+    let conn_id = Uuid::now_v7();
 
     // 1. Register connection in the connection manager pool
-    state.ws_manager.add_client(user_id, tx).await;
+    state.ws_manager.add_client(user_id, conn_id, tx).await;
 
     // 2. Set presence status to online
     if let Err(err) = state.presence_service.set_status(user_id, "online").await {
@@ -95,7 +96,7 @@ async fn handle_socket(socket: WebSocket, user_id: Uuid, state: AppState) {
             match message {
                 Message::Text(text) => {
                     if let Ok(ws_msg) = serde_json::from_str::<WsMessage>(&text) {
-                        if let Err(err) = route_ws_event(user_id, ws_msg, &state_clone).await {
+                        if let Err(err) = route_ws_event(user_id, conn_id, ws_msg, &state_clone).await {
                             tracing::error!("Error routing WebSocket event from user {}: {:?}", user_id, err);
                         }
                     }
@@ -129,27 +130,30 @@ async fn handle_socket(socket: WebSocket, user_id: Uuid, state: AppState) {
         }
     }
 
-    state.ws_manager.remove_client(user_id).await;
-    if let Err(err) = state.presence_service.set_status(user_id, "offline").await {
-        tracing::error!("Failed to set user {} presence to offline: {:?}", user_id, err);
-    }
+    state.ws_manager.remove_client(user_id, conn_id).await;
+    if !state.ws_manager.is_connected(user_id).await {
+        if let Err(err) = state.presence_service.set_status(user_id, "offline").await {
+            tracing::error!("Failed to set user {} presence to offline: {:?}", user_id, err);
+        }
 
-    if let Ok(friends) = state.user_service.get_friends_list(user_id).await {
-        let friend_ids: Vec<uuid::Uuid> = friends.into_iter().map(|f| f.id).collect();
-        state.ws_manager.broadcast_to_users(&friend_ids, WsMessage {
-            event: "presence:status".to_string(),
-            payload: serde_json::json!({
-                "userId": user_id,
-                "isOnline": false,
-                "lastSeen": chrono::Utc::now(),
-            }),
-        }).await;
+        if let Ok(friends) = state.user_service.get_friends_list(user_id).await {
+            let friend_ids: Vec<uuid::Uuid> = friends.into_iter().map(|f| f.id).collect();
+            state.ws_manager.broadcast_to_users(&friend_ids, WsMessage {
+                event: "presence:status".to_string(),
+                payload: serde_json::json!({
+                    "userId": user_id,
+                    "isOnline": false,
+                    "lastSeen": chrono::Utc::now(),
+                }),
+            }).await;
+        }
     }
 }
 
 /// Routes incoming WebSocket messages to corresponding receivers
 async fn route_ws_event(
     sender_id: Uuid,
+    conn_id: Uuid,
     msg: WsMessage,
     state: &AppState,
 ) -> Result<(), AppError> {
@@ -495,7 +499,7 @@ async fn route_ws_event(
                     if let Some(obj) = payload.as_object_mut() {
                         obj.insert("senderId".to_string(), serde_json::json!(sender_id));
                     }
-                    state.ws_manager.send_to_user(recipient_id, WsMessage {
+                    state.ws_manager.send_to_user_except(recipient_id, Some(conn_id), WsMessage {
                         event: event.to_string(),
                         payload,
                     }).await;
