@@ -140,10 +140,14 @@ All REST endpoints are prefixed with `/api/v1` and assume JSON request and respo
 
 ### 🔔 Notifications & Devices
 
-#### **Get Notifications List**
-* **Endpoint**: `GET /users/notifications`
+#### **Get Notifications List (Cursor-Based Pagination)**
+Returns notifications for the authenticated user, ordered newest first with cursor-based pagination.
+* **Endpoint**: `GET /users/notifications?cursor=<notification_uuid>&limit=<limit>`
 * **Headers**: `Authorization: Bearer <access_token>`
-* **Response Model** (200 OK):
+* **Query Parameters**:
+  * `cursor` *(optional, UUID)*: The `id` of the last notification loaded in the current page (also accepts alias `cursorId` / `cursor_id`).
+  * `limit` *(optional, integer)*: Number of items to fetch. Default `20`, min `1`, max `50`.
+* **Response Model** (200 OK): Array of `Notification` objects.
   ```json
   [
     {

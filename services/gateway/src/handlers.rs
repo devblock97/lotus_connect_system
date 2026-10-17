@@ -16,6 +16,7 @@ use dto::{
     CreatePostRequest, UpdatePostRequest, PostResponse, AddPostReactionRequest,
     PostReactionDetailResponse, CreateCommentRequest, UpdateCommentRequest,
     CommentResponse, CommentQuery, AddCommentReactionRequest, CommentReactionResponse, FeedQuery,
+    NotificationQuery,
     CreateStoryRequest, StoryResponse, StoryTrayItemResponse, StoryViewerResponse,
     AddStoryReactionRequest, StoryReactionResponse, StoryReplyRequest, StoryReplyResponse,
     AddCloseFriendRequest, CloseFriendResponse,
@@ -656,8 +657,12 @@ pub async fn unregister_device_handler(
 pub async fn list_notifications_handler(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
+    Query(query): Query<NotificationQuery>,
 ) -> Result<Json<Vec<models::Notification>>> {
-    let notifications = state.notification_service.get_notifications(claims.sub).await?;
+    let notifications = state
+        .notification_service
+        .get_notifications(claims.sub, query.cursor, query.limit)
+        .await?;
     Ok(Json(notifications))
 }
 
@@ -1862,11 +1867,13 @@ pub async fn start_livestream_handler(
 ) -> Result<Json<LiveStreamResponse>> {
     let stream = state.livestream_service.start_stream(claims.sub, stream_id).await?;
 
-    // Broadcast stream started to room
-    state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+    // Broadcast stream started to room and all connected clients
+    let started_msg = WsMessage {
         event: "livestream:started".to_string(),
         payload: serde_json::to_value(&stream).unwrap_or(serde_json::Value::Null),
-    }).await;
+    };
+    state.ws_manager.broadcast_to_livestream(stream_id, started_msg.clone()).await;
+    state.ws_manager.broadcast_all(started_msg).await;
 
     // Send push notification to host's friends
     if let Ok(friends) = state.user_service.get_friends_list(claims.sub).await {
@@ -1898,8 +1905,8 @@ pub async fn end_livestream_handler(
 ) -> Result<Json<LiveStreamResponse>> {
     let stream = state.livestream_service.end_stream(claims.sub, stream_id, payload).await?;
 
-    // Broadcast stream ended to room with summary
-    state.ws_manager.broadcast_to_livestream(stream_id, WsMessage {
+    // Broadcast stream ended to room with summary and all connected clients
+    let ended_msg = WsMessage {
         event: "livestream:ended".to_string(),
         payload: serde_json::json!({
             "streamId": stream_id,
@@ -1909,7 +1916,9 @@ pub async fn end_livestream_handler(
             "totalLikes": stream.like_count,
             "recordingUrl": stream.recording_url,
         }),
-    }).await;
+    };
+    state.ws_manager.broadcast_to_livestream(stream_id, ended_msg.clone()).await;
+    state.ws_manager.broadcast_all(ended_msg).await;
 
     Ok(Json(stream))
 }
@@ -2237,6 +2246,33 @@ mod tests {
 
         let cursor_uuid = Uuid::now_v7();
         let query: FeedQuery = serde_json::from_str(&format!(r#"{{"cursor": "{}"}}"#, cursor_uuid)).unwrap();
+        assert_eq!(query.cursor, Some(cursor_uuid));
+    }
+
+    #[test]
+    fn test_notification_query_deserialization_and_limits() {
+        let query: NotificationQuery = serde_json::from_str("{}").unwrap();
+        assert_eq!(query.cursor, None);
+        assert_eq!(query.limit, None);
+        let effective_limit = query.limit.unwrap_or(20).clamp(1, 50);
+        assert_eq!(effective_limit, 20);
+
+        let query: NotificationQuery = serde_json::from_str(r#"{"limit": 100}"#).unwrap();
+        let effective_limit = query.limit.unwrap_or(20).clamp(1, 50);
+        assert_eq!(effective_limit, 50);
+
+        let query: NotificationQuery = serde_json::from_str(r#"{"limit": -5}"#).unwrap();
+        let effective_limit = query.limit.unwrap_or(20).clamp(1, 50);
+        assert_eq!(effective_limit, 1);
+
+        let cursor_uuid = Uuid::now_v7();
+        let query: NotificationQuery = serde_json::from_str(&format!(r#"{{"cursor": "{}"}}"#, cursor_uuid)).unwrap();
+        assert_eq!(query.cursor, Some(cursor_uuid));
+
+        let query: NotificationQuery = serde_json::from_str(&format!(r#"{{"cursorId": "{}"}}"#, cursor_uuid)).unwrap();
+        assert_eq!(query.cursor, Some(cursor_uuid));
+
+        let query: NotificationQuery = serde_json::from_str(&format!(r#"{{"cursor_id": "{}"}}"#, cursor_uuid)).unwrap();
         assert_eq!(query.cursor, Some(cursor_uuid));
     }
 

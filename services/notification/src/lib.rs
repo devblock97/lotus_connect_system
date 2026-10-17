@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use database::PgPool;
 use errors::{AppError, Result};
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
@@ -23,7 +23,12 @@ pub trait NotificationService: Send + Sync {
     ) -> Result<()>;
     async fn register_device(&self, user_id: Uuid, token: &str, platform: &str) -> Result<()>;
     async fn unregister_device(&self, user_id: Uuid, token: &str) -> Result<()>;
-    async fn get_notifications(&self, user_id: Uuid) -> Result<Vec<models::Notification>>;
+    async fn get_notifications(
+        &self,
+        user_id: Uuid,
+        cursor: Option<Uuid>,
+        limit: Option<i64>,
+    ) -> Result<Vec<models::Notification>>;
     async fn mark_all_read(&self, user_id: Uuid) -> Result<()>;
     async fn mark_read(&self, user_id: Uuid, notification_id: Uuid) -> Result<()>;
     async fn delete_notification(&self, user_id: Uuid, notification_id: Uuid) -> Result<()>;
@@ -573,11 +578,39 @@ impl NotificationService for NotificationServiceImpl {
         Ok(())
     }
 
-    async fn get_notifications(&self, user_id: Uuid) -> Result<Vec<models::Notification>> {
+    async fn get_notifications(
+        &self,
+        user_id: Uuid,
+        cursor: Option<Uuid>,
+        limit: Option<i64>,
+    ) -> Result<Vec<models::Notification>> {
+        let limit = limit.unwrap_or(20).clamp(1, 50);
+        let cursor_time = if let Some(cid) = cursor {
+            sqlx::query_scalar::<_, DateTime<Utc>>(
+                "SELECT created_at FROM notifications WHERE id = $1"
+            )
+            .bind(cid)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(AppError::Database)?
+        } else {
+            None
+        };
+
         sqlx::query_as::<_, models::Notification>(
-            "SELECT id, user_id, title, body, data, is_read, created_at FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50"
+            r#"
+            SELECT id, user_id, title, body, data, is_read, created_at
+            FROM notifications
+            WHERE user_id = $1
+              AND ($2::timestamptz IS NULL OR created_at < $2 OR (created_at = $2 AND id < $3))
+            ORDER BY created_at DESC, id DESC
+            LIMIT $4
+            "#
         )
         .bind(user_id)
+        .bind(cursor_time)
+        .bind(cursor)
+        .bind(limit)
         .fetch_all(&self.pool)
         .await
         .map_err(AppError::Database)

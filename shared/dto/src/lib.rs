@@ -281,6 +281,14 @@ pub struct FeedQuery {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationQuery {
+    #[serde(alias = "cursor_id", alias = "cursorId")]
+    pub cursor: Option<Uuid>,
+    pub limit: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateStoryRequest {
